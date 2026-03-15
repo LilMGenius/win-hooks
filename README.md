@@ -38,7 +38,8 @@ You didn't choose the wrong OS. The ecosystem just forgot about you.
 Install **win-hooks** once. Forget about it forever.
 
 ```bash
-claude plugin add LilMGenius/win-hooks
+claude plugin marketplace add LilMGenius/win-hooks
+claude plugin install win-hooks
 ```
 
 That's it. Next session, win-hooks silently patches every broken plugin before you even notice. No config. No flags. No manual fixing.
