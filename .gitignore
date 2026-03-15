@@ -1,0 +1,3 @@
+*.bak
+*.tmp
+.claude/*.local.md
