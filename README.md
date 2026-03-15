@@ -2,7 +2,7 @@
 
 # win-hooks
 
-### *"Vibe on, Windows."*
+### *"Linux? Nah. Win-ux!"*
 
 **Don't let Windows kill your vibe coding flow.**
 
