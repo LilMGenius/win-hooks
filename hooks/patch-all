@@ -1,0 +1,55 @@
+#!/bin/bash
+# win-hooks: patch-all
+# Scans all installed Claude Code plugins and patches incompatible hooks
+# for Windows compatibility. Creates run-hook.cmd polyglot wrappers and
+# extensionless bash wrapper scripts. Idempotent - safe to run repeatedly.
+#
+# Runs at SessionStart via the win-hooks plugin hook.
+# Also callable manually: bash patch-all
+
+set -euo pipefail
+
+# ── Platform check ──────────────────────────────────────────────────
+# Only patch on Windows. On Unix/macOS, hooks work natively.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    ;; # Windows - continue
+  *)
+    exit 0 ;; # Not Windows - skip
+esac
+
+# ── Paths ───────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TEMPLATE_CMD="${PLUGIN_ROOT}/hooks/run-hook.cmd"
+SCRIPTS_DIR="${PLUGIN_ROOT}/scripts"
+
+if [[ ! -f "$TEMPLATE_CMD" ]]; then
+  echo "win-hooks: template run-hook.cmd not found at ${TEMPLATE_CMD}" >&2
+  exit 1
+fi
+
+# ── Find Python ─────────────────────────────────────────────────────
+PYTHON=""
+if command -v python3 &>/dev/null; then
+  PYTHON="python3"
+elif command -v python &>/dev/null; then
+  PYTHON="python"
+else
+  echo "win-hooks: python not found, cannot patch hooks" >&2
+  exit 1
+fi
+
+# ── Ensure python3 exists ───────────────────────────────────────────
+# Most plugins call python3, but Windows only has python.exe.
+# Copy python.exe -> python3.exe so those hooks don't fail.
+if ! command -v python3 &>/dev/null && command -v python &>/dev/null; then
+  python_exe="$(command -v python)"
+  python_dir="$(dirname "$python_exe")"
+  cp "$python_exe" "${python_dir}/python3" 2>/dev/null || true
+fi
+
+# ── Run pipeline: find-incompatible | apply-patches ─────────────────
+"$PYTHON" "${SCRIPTS_DIR}/find-incompatible.py" \
+  | "$PYTHON" "${SCRIPTS_DIR}/apply-patches.py" "$TEMPLATE_CMD" \
+  >/dev/null 2>&1 || true

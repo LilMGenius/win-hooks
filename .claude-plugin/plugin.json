@@ -1,0 +1,13 @@
+{
+  "name": "win-hooks",
+  "version": "1.0.0",
+  "description": "Automatically patches Claude Code plugin hooks for Windows compatibility. Fixes .sh scripts, missing binaries, and Unix-only commands that fail on Windows.",
+  "author": {
+    "name": "LilMGenius",
+    "url": "https://github.com/LilMGenius"
+  },
+  "homepage": "https://github.com/LilMGenius/win-hooks",
+  "repository": "https://github.com/LilMGenius/win-hooks",
+  "license": "MIT",
+  "keywords": ["windows", "hooks", "compatibility", "patch", "fix", "cross-platform"]
+}
