@@ -1,0 +1,17 @@
+{
+  "name": "win-hooks",
+  "owner": {
+    "name": "LilMGenius"
+  },
+  "metadata": {
+    "description": "Auto-patches Claude Code plugin hooks for Windows compatibility"
+  },
+  "plugins": [
+    {
+      "name": "win-hooks",
+      "source": "./",
+      "description": "Automatically patches Claude Code plugin hooks for Windows compatibility. Fixes .sh scripts, missing binaries, and Unix-only commands that fail on Windows.",
+      "version": "1.0.1"
+    }
+  ]
+}
