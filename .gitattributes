@@ -4,7 +4,8 @@
 # Explicitly force LF for scripts that bash must execute
 hooks/patch-all text eol=lf
 hooks/run-hook.cmd text eol=lf
+scripts/find-incompatible text eol=lf
+scripts/apply-patches text eol=lf
 *.sh text eol=lf
-*.py text eol=lf
 *.json text eol=lf
 *.md text eol=lf

@@ -33,7 +33,7 @@ Stop hook error: ...
 
 You didn't choose the wrong OS. The ecosystem just forgot about you.
 
-## The Fix
+## Quick Start
 
 Install **win-hooks** once. Forget about it forever.
 
@@ -54,7 +54,7 @@ scan all plugins → detect incompatible hooks → generate wrappers → patch h
 
 1. **Scans** `~/.claude/plugins/installed_plugins.json` for all installed plugins
 2. **Detects** `.sh` scripts, missing binaries, and Unix-only commands
-3. **Creates** polyglot `.cmd` wrappers that work on both `cmd.exe` and bash
+3. **Creates** a polyglot `.cmd` entry point and extensionless bash wrappers
 4. **Patches** each plugin's `hooks.json` (originals backed up as `.bak`)
 5. **Skips** anything already compatible — safe to run a thousand times
 
