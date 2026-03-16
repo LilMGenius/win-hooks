@@ -151,23 +151,40 @@ def main():
             wrapper_path = os.path.join(scripts_dir, wrapper_name)
             if os.path.isfile(wrapper_path):
                 # Existing file might be an original plugin script; skip
-                existing = open(wrapper_path, "r", encoding="utf-8", errors="ignore").read(32)
+                with open(wrapper_path, "r", encoding="utf-8", errors="ignore") as f:
+                    existing = f.read()
                 if not existing.startswith("#!/bin/bash\n"):
                     continue
-            with open(wrapper_path, "w", newline="\n", encoding="utf-8") as f:
-                f.write(wrapper_content)
+                # Skip rewrite if content is already correct
+                if existing == wrapper_content:
+                    # Still need to update hooks.json below
+                    pass
+                else:
+                    with open(wrapper_path, "w", newline="\n", encoding="utf-8") as f:
+                        f.write(wrapper_content)
+            else:
+                with open(wrapper_path, "w", newline="\n", encoding="utf-8") as f:
+                    f.write(wrapper_content)
 
-            # Update hooks.json command — preserve original arguments
-            extra_args = " ".join(cmd.split()[1:])
+            # Update hooks.json command
             new_cmd = f'"${{CLAUDE_PLUGIN_ROOT}}/{rel_scripts}/run-hook.cmd" {wrapper_name}'
-            if extra_args:
-                new_cmd += f" {extra_args}"
+            # For CLAUDE_PLUGIN_ROOT paths, pass original arguments through
+            # (the wrapper uses $@ to forward them to the original script).
+            # For bare commands, the wrapper hardcodes the full command,
+            # so extra args would be redundant.
+            if "${CLAUDE_PLUGIN_ROOT}" in cmd:
+                extra_args = " ".join(cmd.split()[1:])
+                if extra_args:
+                    new_cmd += f" {extra_args}"
             data["hooks"][event][gi]["hooks"][hi]["command"] = new_cmd
 
-        # Write updated hooks.json
-        with open(hooks_file, "w", newline="\n", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("\n")
+        # Write updated hooks.json only if changed
+        new_content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        with open(hooks_file, "r", encoding="utf-8-sig") as f:
+            old_content = f.read()
+        if new_content != old_content:
+            with open(hooks_file, "w", newline="\n", encoding="utf-8") as f:
+                f.write(new_content)
 
         patched += 1
         print(f"PATCHED: {plugin['plugin']}", file=sys.stderr)

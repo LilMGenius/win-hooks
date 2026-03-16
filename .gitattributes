@@ -1,0 +1,10 @@
+# Force LF line endings for all text files
+* text=auto eol=lf
+
+# Explicitly force LF for scripts that bash must execute
+hooks/patch-all text eol=lf
+hooks/run-hook.cmd text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
