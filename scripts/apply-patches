@@ -1,0 +1,154 @@
+#!/bin/bash
+# win-hooks: apply-patches
+# Reads tab-separated lines from find-incompatible on stdin:
+#   plugin\tinstall_path\thooks_file\tevent\tcommand
+# Creates wrapper scripts and patches hooks.json files.
+#
+# Usage: find-incompatible | apply-patches <template_cmd_path>
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: apply-patches <template_cmd_path>" >&2
+  exit 1
+fi
+
+TEMPLATE_CMD="$1"
+if [[ ! -f "$TEMPLATE_CMD" ]]; then
+  echo "Template not found: $TEMPLATE_CMD" >&2
+  exit 1
+fi
+
+# Extract a meaningful wrapper name from a hook command.
+# Returns an extensionless name to avoid colliding with original plugin files.
+get_wrapper_name() {
+  local cmd="$1"
+
+  # "tool mcp -k inject-secure-defaults" -> "inject-secure-defaults"
+  if [[ "$cmd" =~ -k[[:space:]]+([^[:space:]]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return
+  fi
+
+  # "${CLAUDE_PLUGIN_ROOT}/scripts/check_version.sh" -> "check-version"
+  local path_part
+  path_part=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+  if [[ "$path_part" == */* ]]; then
+    local base
+    base=$(basename "$path_part")
+    base="${base%.*}"
+    echo "${base//_/-}"
+    return
+  fi
+
+  # Bare command: "foo bar baz" -> "foo-bar-baz"
+  local name
+  name=$(printf '%s' "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  name=$(printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g')
+  echo "${name:-hook-wrapper}"
+}
+
+# Generate bash wrapper script content for an incompatible command.
+generate_wrapper() {
+  local cmd="$1"
+  local path_part
+  path_part=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+
+  # .sh script via CLAUDE_PLUGIN_ROOT
+  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* && "$cmd" == *".sh"* ]]; then
+    local rel_path
+    rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel_path"
+    return
+  fi
+
+  # Non-.sh path via CLAUDE_PLUGIN_ROOT
+  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
+    local rel_path
+    rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel_path"
+    return
+  fi
+
+  # Bare command with dependency check
+  local dep
+  dep=$(printf '%s' "$cmd" | awk '{print $1}')
+  printf '#!/bin/bash\nif ! command -v "%s" &>/dev/null; then\n  exit 0\nfi\n%s\n' "$dep" "$cmd"
+}
+
+# Replace a command string in hooks.json using exact (literal) matching.
+# Uses awk index() which is not regex-based, so no escaping issues.
+patch_hooks_json() {
+  local hooks_file="$1"
+  export _PATCH_OLD="$2" _PATCH_NEW="$3"
+  awk '
+    BEGIN { old = ENVIRON["_PATCH_OLD"]; new = ENVIRON["_PATCH_NEW"] }
+    {
+      idx = index($0, old)
+      if (idx > 0) {
+        print substr($0, 1, idx-1) new substr($0, idx + length(old))
+      } else {
+        print
+      }
+    }
+  ' "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
+  unset _PATCH_OLD _PATCH_NEW
+}
+
+# Track which hooks files have been set up
+declare -A SETUP_DONE
+declare -A PATCHED_PLUGINS
+patched_count=0
+
+while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
+  [[ -z "$plugin" ]] && continue
+
+  scripts_dir="${install_path}/_hooks"
+
+  # One-time setup per plugin
+  if [[ -z "${SETUP_DONE[$hooks_file]:-}" ]]; then
+    mkdir -p "$scripts_dir"
+    [[ ! -f "${scripts_dir}/run-hook.cmd" ]] && cp "$TEMPLATE_CMD" "${scripts_dir}/run-hook.cmd"
+    [[ ! -f "${hooks_file}.bak" ]] && cp "$hooks_file" "${hooks_file}.bak"
+    SETUP_DONE[$hooks_file]=1
+  fi
+
+  wrapper_name=$(get_wrapper_name "$cmd")
+  wrapper_content=$(generate_wrapper "$cmd")
+  wrapper_path="${scripts_dir}/${wrapper_name}"
+
+  # Write wrapper — skip if existing non-wrapper file
+  if [[ -f "$wrapper_path" ]]; then
+    existing=$(cat "$wrapper_path")
+    if [[ "$existing" != "#!/bin/bash"* ]]; then
+      continue
+    fi
+    # Skip rewrite if content matches
+    if [[ "$existing" != "$wrapper_content" ]]; then
+      printf '%s' "$wrapper_content" > "$wrapper_path"
+    fi
+  else
+    printf '%s' "$wrapper_content" > "$wrapper_path"
+  fi
+
+  # Build new command (JSON-escaped form for text replacement)
+  new_cmd='\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" '"${wrapper_name}"
+
+  # For CLAUDE_PLUGIN_ROOT paths, preserve original arguments
+  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
+    extra_args=$(printf '%s' "$cmd" | awk '{$1=""; sub(/^ +/, ""); print}')
+    [[ -n "$extra_args" ]] && new_cmd="${new_cmd} ${extra_args}"
+  fi
+
+  # Replace command in hooks.json
+  patch_hooks_json "$hooks_file" "$cmd" "$new_cmd"
+
+  # Track patched plugins
+  if [[ -z "${PATCHED_PLUGINS[$plugin]:-}" ]]; then
+    PATCHED_PLUGINS[$plugin]=1
+    patched_count=$((patched_count + 1))
+    echo "PATCHED: $plugin" >&2
+  fi
+done
+
+echo "patched: $patched_count"

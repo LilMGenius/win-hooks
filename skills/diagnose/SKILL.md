@@ -148,9 +148,9 @@ cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
 - Verify the wrapper script has correct content: `cat <plugin>/_hooks/<wrapper-name>`
 - Run with debug: `claude --debug hooks` to see hook execution details
 
-**python not found:**
-- Ensure Python 3 is installed and `python.exe` is in PATH
-- The patcher automatically copies `python.exe` → `python3.exe` if `python3` is missing, so other plugins that call `python3` will also work
+**python3 not found (other plugins):**
+- win-hooks automatically copies `python.exe` → `python3.exe` if `python3` is missing, so other plugins that call `python3` will work
+- If Python is not installed at all, plugins that require Python will still fail — install Python to fix
 
 **Plugin update overwrites fix:**
 - This is expected. Restart Claude Code and win-hooks will re-patch automatically.

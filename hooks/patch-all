@@ -29,17 +29,6 @@ if [[ ! -f "$TEMPLATE_CMD" ]]; then
   exit 1
 fi
 
-# ── Find Python ─────────────────────────────────────────────────────
-PYTHON=""
-if command -v python3 &>/dev/null; then
-  PYTHON="python3"
-elif command -v python &>/dev/null; then
-  PYTHON="python"
-else
-  echo "win-hooks: python not found, cannot patch hooks" >&2
-  exit 0
-fi
-
 # ── Ensure python3 exists ───────────────────────────────────────────
 # Most plugins call python3, but Windows only has python.exe.
 # Copy python.exe -> python3.exe so those hooks don't fail.
@@ -50,8 +39,8 @@ if ! command -v python3 &>/dev/null && command -v python &>/dev/null; then
 fi
 
 # ── Run pipeline: find-incompatible | apply-patches ─────────────────
-RESULT=$("$PYTHON" "${SCRIPTS_DIR}/find-incompatible.py" \
-  | "$PYTHON" "${SCRIPTS_DIR}/apply-patches.py" "$TEMPLATE_CMD" 2>&1) || {
+RESULT=$(bash "${SCRIPTS_DIR}/find-incompatible" \
+  | bash "${SCRIPTS_DIR}/apply-patches" "$TEMPLATE_CMD" 2>&1) || {
   echo "win-hooks: patch pipeline failed" >&2
   echo "$RESULT" >&2
   exit 1

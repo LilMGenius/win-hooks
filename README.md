@@ -111,10 +111,9 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 ## Requirements
 
 - **Windows 10/11** with [Git for Windows](https://gitforwindows.org/)
-- **Python 3** — `winget install Python.Python.3` or [python.org](https://www.python.org/downloads/)
 - **Claude Code** CLI
 
-> **Note**: win-hooks auto-creates a `python3` alias if only `python.exe` exists — so other plugins that call `python3` won't break either.
+> **Bonus**: win-hooks auto-creates a `python3` alias if only `python.exe` exists — so other plugins that call `python3` won't break either.
 
 ## Components
 
@@ -124,10 +123,10 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | Component | Purpose |
 |-----------|---------|
 | `hooks/hooks.json` | SessionStart hook — triggers auto-patching |
-| `hooks/patch-all` | Orchestrator — platform check → find python → run pipeline |
+| `hooks/patch-all` | Orchestrator — platform check → run pipeline |
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
-| `scripts/find-incompatible.py` | Scanner — detects incompatible hooks across all plugins |
-| `scripts/apply-patches.py` | Patcher — creates wrappers and updates hooks.json |
+| `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
+| `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
 | `commands/status.md` | `/win-hooks:status` command definition |
 | `skills/diagnose/` | Diagnostic skill for hook errors |

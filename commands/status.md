@@ -12,15 +12,12 @@ Show the current Windows compatibility status of all installed plugin hooks.
 ### Step 1: Find the win-hooks plugin install path
 
 ```bash
-python3 -c "
-import json, os
-p = os.path.join(os.path.expanduser('~'), '.claude', 'plugins', 'installed_plugins.json')
-d = json.load(open(p, encoding='utf-8-sig'))
-for name, entries in d.get('plugins', {}).items():
-    if 'win-hooks' in name:
-        for e in entries:
-            print(e['installPath'].replace(chr(92), '/'))
-"
+awk '/win-hooks/ && /"installPath"/ {
+  sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
+  sub(/".*/, "")
+  gsub(/\\\\/, "/")
+  print
+}' ~/.claude/plugins/installed_plugins.json
 ```
 
 Save the output path as CLAUDE_PLUGIN_ROOT.
@@ -28,10 +25,10 @@ Save the output path as CLAUDE_PLUGIN_ROOT.
 ### Step 2: Run the scanner
 
 ```bash
-python3 "<CLAUDE_PLUGIN_ROOT>/scripts/find-incompatible.py"
+bash "<CLAUDE_PLUGIN_ROOT>/scripts/find-incompatible"
 ```
 
-This outputs a JSON array of plugins with incompatible hooks. An empty array `[]` means all plugins are compatible.
+This outputs tab-separated lines (plugin, path, hooks_file, event, command) for each incompatible hook. Empty output means all plugins are compatible.
 
 ### Step 3: Present results as a table
 
