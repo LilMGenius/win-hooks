@@ -69,10 +69,11 @@ cp <plugin>/hooks/hooks.json <plugin>/hooks/hooks.json.bak
 
 #### 2. Copy run-hook.cmd Template
 
-The win-hooks plugin includes a polyglot `.cmd` template at `${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd`. Copy it to the target plugin's scripts directory:
+The win-hooks plugin includes a polyglot `.cmd` template at `${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd`. Copy it to the target plugin's `_hooks/` directory (dedicated wrapper directory — never use the plugin's own `hooks/` or `scripts/`):
 
 ```bash
-cp "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" "<target-plugin>/scripts/run-hook.cmd"
+mkdir -p "<target-plugin>/_hooks"
+cp "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" "<target-plugin>/_hooks/run-hook.cmd"
 ```
 
 This polyglot file works on both cmd.exe (Windows) and bash (Unix):
@@ -112,7 +113,7 @@ Replace each incompatible command:
 // Before:
 "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check_version.sh"
 // After:
-"command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.cmd\" check-version"
+"command": "\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" check-version"
 ```
 
 ## Hook Event Types
@@ -144,7 +145,7 @@ cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
 
 **Hook still errors after patching:**
 - Check if Git Bash is installed at `C:\Program Files\Git\bin\bash.exe`
-- Verify the wrapper script has correct content: `cat <plugin>/scripts/<wrapper-name>`
+- Verify the wrapper script has correct content: `cat <plugin>/_hooks/<wrapper-name>`
 - Run with debug: `claude --debug hooks` to see hook execution details
 
 **python not found:**

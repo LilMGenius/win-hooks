@@ -15,6 +15,8 @@ import os
 import shutil
 import sys
 
+SAFE_INTERPRETERS = ("python3", "python", "node", "npx", "npm")
+
 
 def find_installed_plugins():
     """Locate installed_plugins.json and return parsed data."""
@@ -55,7 +57,7 @@ def is_incompatible(command):
         # Allow interpreter-prefixed commands — these work on Windows if
         # the interpreter (python3, node, etc.) is installed
         first_word = command.split()[0].strip('"').strip("'")
-        if first_word in ("python3", "python", "node", "npx", "npm"):
+        if first_word in SAFE_INTERPRETERS:
             return False
         # Allow .py scripts (even without interpreter prefix) — Python
         # handles them on Windows via file association or py launcher

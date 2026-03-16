@@ -68,7 +68,7 @@ The core innovation is a `.cmd` file that is simultaneously valid batch *and* va
 : << 'CMDBLOCK'
 @echo off
 REM Windows cmd.exe runs this part → finds Git Bash → delegates
-"C:\Program Files\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5
+"C:\Program Files\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 CMDBLOCK
 

@@ -37,7 +37,7 @@ elif command -v python &>/dev/null; then
   PYTHON="python"
 else
   echo "win-hooks: python not found, cannot patch hooks" >&2
-  exit 1
+  exit 0
 fi
 
 # ── Ensure python3 exists ───────────────────────────────────────────
@@ -50,6 +50,15 @@ if ! command -v python3 &>/dev/null && command -v python &>/dev/null; then
 fi
 
 # ── Run pipeline: find-incompatible | apply-patches ─────────────────
-"$PYTHON" "${SCRIPTS_DIR}/find-incompatible.py" \
-  | "$PYTHON" "${SCRIPTS_DIR}/apply-patches.py" "$TEMPLATE_CMD" \
-  >/dev/null 2>&1 || true
+RESULT=$("$PYTHON" "${SCRIPTS_DIR}/find-incompatible.py" \
+  | "$PYTHON" "${SCRIPTS_DIR}/apply-patches.py" "$TEMPLATE_CMD" 2>&1) || {
+  echo "win-hooks: patch pipeline failed" >&2
+  echo "$RESULT" >&2
+  exit 1
+}
+
+# Show summary to stderr (visible in hook output)
+if echo "$RESULT" | grep -q "^PATCHED:"; then
+  PATCHED=$(echo "$RESULT" | grep -c "^PATCHED:")
+  echo "win-hooks: patched $PATCHED plugin(s)" >&2
+fi
