@@ -36,8 +36,8 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 **Fix**: Run `/win-hooks:fix` to create polyglot wrappers.
 
 ### "MODULE_NOT_FOUND" in Node.js hooks
-**Root cause**: Backslashes in Windows paths being eaten during string processing, producing mangled paths like `C:\Users\smsme\Userssmsme.configaincreport-usage.js`.
-**Note**: This is typically a bug in the affected plugin itself, not something win-hooks can fix. Report to the plugin author.
+**Root cause**: Windows backslash paths in `settings.json` hook commands get mangled during execution — backslashes are interpreted as escape characters, producing paths like `Userssmsme.configaincreport-usage.js`.
+**Fix**: Run `/win-hooks:fix` which converts `C:\...` to `C:/...` in settings.json hooks via `fix-backslash-paths`.
 
 ## Why Hooks Break on Windows
 

@@ -133,10 +133,10 @@ Each case includes: symptom, root cause, detection method, and fix.
 
 ## External / Not Fixable by win-hooks
 
-### CASE-18: Node.js path mangling in other plugins
+### CASE-18: Node.js path mangling in hook commands
 - **Symptom**: `Cannot find module 'C:\Users\smsme\Userssmsme.configaincreport-usage.js'` — backslashes eaten, path mangled.
-- **Root cause**: Bug in the affected plugin's path handling (backslash used as escape in string interpolation).
-- **Note**: This is NOT a win-hooks issue. Report to the plugin author.
+- **Root cause**: Initially misdiagnosed as a plugin code bug. Actually caused by Windows backslash paths in `settings.json` hook commands being mangled during Claude Code's execution. See CASE-20 for the full analysis and fix.
+- **Note**: Originally classified as "not fixable by win-hooks". Now fixed by `fix-backslash-paths` script.
 
 ### CASE-19: Double-slash in CLAUDE_PLUGIN_ROOT
 - **Symptom**: Paths like `C://Users//smsme//.claude//...` in error messages.
@@ -147,7 +147,14 @@ Each case includes: symptom, root cause, detection method, and fix.
 
 ## Runtime Dependencies
 
-### CASE-20: Python not installed
+### CASE-20: Backslash paths in settings.json hooks
+- **Symptom**: `Cannot find module 'C:\Users\smsme\Desktop\win-hooks\Userssmsme.configaincreport-usage.js'` — path mangled, backslashes eaten.
+- **Root cause**: `~/.claude/settings.json` hook commands contain Windows backslash paths (`C:\\Users\\...`). During execution, backslashes get interpreted as escape characters, mangling the path into a relative path resolved against CWD.
+- **Detection**: `verify` checks for backslash paths via `fix-backslash-paths --dry-run`. `fix-backslash-paths` scans all hook commands in settings.json.
+- **Fix**: `fix-backslash-paths` converts `C:\...` to `C:/...` in hook commands. Node.js handles forward slashes on Windows. Integrated into `patch-all` pipeline. Backup saved as `settings.json.winhooks.bak`.
+- **Discovered**: 2026-03-28 — Stop hook for `ainc/report-usage.js` had `C:\\Users\\smsme\\.config\\ainc\\report-usage.js`.
+
+### CASE-21: Python not installed
 - **Symptom**: `sanitize_file()`, `validate_json()`, `verify` all fail if Python is the only JSON runtime.
 - **Root cause**: User doesn't have Python installed. Common for non-developer Windows users.
 - **Fix**: Python dependency removed. Fallback chain for JSON operations: `node` (guaranteed by Claude Code) → `powershell.exe` (Windows built-in) → skip with warning. BOM/CRLF sanitization is pure bash (od + sed).

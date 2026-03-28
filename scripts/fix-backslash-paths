@@ -1,0 +1,94 @@
+#!/bin/bash
+# win-hooks: fix-backslash-paths
+# Converts Windows backslash paths (C:\...) to forward slashes (C:/...)
+# in hook commands found in ~/.claude/settings.json.
+#
+# Fixes "MODULE_NOT_FOUND" errors caused by backslash path mangling
+# during Claude Code's hook execution on Windows.
+#
+# Requires: node (guaranteed by Claude Code)
+#
+# Usage: fix-backslash-paths [--dry-run]
+#   --dry-run: show what would change without modifying files
+#
+# Output: tab-separated lines to stdout:
+#   event\told_command\tnew_command
+#
+# Exit code: 0 = success or nothing to fix, 1 = error
+
+set -uo pipefail
+
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+
+SETTINGS="${HOME}/.claude/settings.json"
+[[ ! -f "$SETTINGS" ]] && exit 0
+
+if ! command -v node &>/dev/null; then
+  echo "win-hooks: node not found, cannot fix backslash paths" >&2
+  exit 1
+fi
+
+node - "$SETTINGS" "$DRY_RUN" << 'JSEOF'
+const fs = require('fs');
+const settingsPath = process.argv[2];
+const dryRun = process.argv[3] === 'true';
+
+const raw = fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
+let data;
+try {
+  data = JSON.parse(raw);
+} catch (e) {
+  process.stderr.write('win-hooks: settings.json parse error: ' + e.message + '\n');
+  process.exit(1);
+}
+
+if (!data.hooks) process.exit(0);
+
+const changes = [];
+
+function fixPaths(obj, location) {
+  if (Array.isArray(obj)) {
+    obj.forEach((item, i) => fixPaths(item, location + '[' + i + ']'));
+  } else if (obj && typeof obj === 'object') {
+    if (typeof obj.command === 'string') {
+      // Match Windows absolute paths: C:\... pattern
+      // Replace backslashes with forward slashes within each matched path
+      const fixed = obj.command.replace(
+        /([A-Za-z]):\\([^\s"]*)/g,
+        (m) => m.replace(/\\/g, '/')
+      );
+      if (fixed !== obj.command) {
+        changes.push({ location, old: obj.command, fixed });
+        if (!dryRun) obj.command = fixed;
+      }
+    }
+    for (const [key, val] of Object.entries(obj)) {
+      fixPaths(val, location + '.' + key);
+    }
+  }
+}
+
+fixPaths(data.hooks, 'hooks');
+
+if (changes.length === 0) {
+  process.exit(0);
+}
+
+// Report changes (tab-separated to stdout)
+for (const c of changes) {
+  console.log(c.location + '\t' + c.old + '\t' + c.fixed);
+}
+
+if (!dryRun) {
+  // Backup (only first time)
+  const bakPath = settingsPath + '.winhooks.bak';
+  if (!fs.existsSync(bakPath)) {
+    fs.copyFileSync(settingsPath, bakPath);
+  }
+  fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2) + '\n');
+  process.stderr.write('win-hooks: fixed ' + changes.length + ' backslash path(s) in settings.json\n');
+} else {
+  process.stderr.write('win-hooks: would fix ' + changes.length + ' backslash path(s) (dry-run)\n');
+}
+JSEOF

@@ -165,6 +165,18 @@ while IFS=$'\t' read -r plugin install_path; do
   fi
 done < <(parse_plugins)
 
+# ── Check settings.json for backslash paths ───────────────────────
+
+SETTINGS="${HOME}/.claude/settings.json"
+if [[ -f "$SETTINGS" ]] && command -v node &>/dev/null; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  if [[ -f "${SCRIPT_DIR}/fix-backslash-paths" ]]; then
+    bash "${SCRIPT_DIR}/fix-backslash-paths" --dry-run 2>/dev/null | while IFS=$'\t' read -r location old_cmd new_cmd; do
+      add_issue "settings.json" "$SETTINGS" "backslash_path" "${location}: ${old_cmd}"
+    done
+  fi
+fi
+
 # ── Summary ────────────────────────────────────────────────────────
 
 issues=$(wc -l < "$ISSUES_FILE" | tr -d ' ')

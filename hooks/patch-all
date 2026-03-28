@@ -52,6 +52,12 @@ if echo "$RESULT" | grep -q "^PATCHED:"; then
   echo "win-hooks: patched $PATCHED plugin(s)" >&2
 fi
 
+# ── Fix backslash paths in settings.json ────────────────────────────
+# Convert C:\... to C:/... in hook commands to prevent path mangling
+if [[ -f "${SCRIPTS_DIR}/fix-backslash-paths" ]]; then
+  bash "${SCRIPTS_DIR}/fix-backslash-paths" 2>&1 | grep -v "^hooks\." || true
+fi
+
 # ── Post-patch verification ─────────────────────────────────────────
 # Run verify --fix to detect and auto-repair any remaining issues
 # (BOM, CRLF, broken JSON, missing wrappers)
