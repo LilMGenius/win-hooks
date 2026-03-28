@@ -1,4 +1,6 @@
-# Win-Hooks: Known Edge Cases & Scenarios
+# Win-Hooks
+
+## Known Edge Cases & Scenarios
 
 All discovered Windows compatibility issues that win-hooks detects, fixes, or documents.
 Each case includes: symptom, root cause, detection method, and fix.
@@ -131,7 +133,7 @@ Each case includes: symptom, root cause, detection method, and fix.
 
 ---
 
-## External / Not Fixable by win-hooks
+## Path Handling
 
 ### CASE-18: Node.js path mangling in hook commands
 - **Symptom**: `Cannot find module 'C:\Users\smsme\Userssmsme.configaincreport-usage.js'` — backslashes eaten, path mangled.
@@ -140,12 +142,9 @@ Each case includes: symptom, root cause, detection method, and fix.
 
 ### CASE-19: Double-slash in CLAUDE_PLUGIN_ROOT
 - **Symptom**: Paths like `C://Users//smsme//.claude//...` in error messages.
-- **Root cause**: Claude Code or the shell normalizes Windows paths with double forward slashes.
-- **Note**: Usually harmless — most programs handle `//` fine. But can cause confusion in error messages.
-
----
-
-## Runtime Dependencies
+- **Root cause**: awk `gsub(/\\\\/, "/")` matches single backslash (not pair) due to regex double-escaping, producing `//` for each `\\`.
+- **Fix**: Replaced awk gsub with `sed 's/[\\][\\]*/\//g'` pipe which correctly collapses backslash sequences to single forward slash.
+- **Discovered**: 2026-03-28.
 
 ### CASE-20: Backslash paths in settings.json hooks
 - **Symptom**: `Cannot find module 'C:\Users\smsme\Desktop\win-hooks\Userssmsme.configaincreport-usage.js'` — path mangled, backslashes eaten.
@@ -154,7 +153,31 @@ Each case includes: symptom, root cause, detection method, and fix.
 - **Fix**: `fix-backslash-paths` converts `C:\...` to `C:/...` in hook commands. Node.js handles forward slashes on Windows. Integrated into `patch-all` pipeline. Backup saved as `settings.json.winhooks.bak`.
 - **Discovered**: 2026-03-28 — Stop hook for `ainc/report-usage.js` had `C:\\Users\\smsme\\.config\\ainc\\report-usage.js`.
 
+---
+
+## Runtime Dependencies
+
 ### CASE-21: Python not installed
 - **Symptom**: `sanitize_file()`, `validate_json()`, `verify` all fail if Python is the only JSON runtime.
 - **Root cause**: User doesn't have Python installed. Common for non-developer Windows users.
 - **Fix**: Python dependency removed. Fallback chain for JSON operations: `node` (guaranteed by Claude Code) → `powershell.exe` (Windows built-in) → skip with warning. BOM/CRLF sanitization is pure bash (od + sed).
+
+---
+
+## Work Principles
+
+Every task must end with these sync steps before committing:
+
+1. **CLAUDE.md** — New edge case discovered? Add a CASE-XX entry with symptom, root cause, detection, and fix.
+2. **README.md** — Pipeline, components table, or requirements changed? Update the corresponding section.
+3. **skills/diagnose/SKILL.md** — New error pattern or fix procedure? Update Common Error Patterns and Diagnosis/Fix sections.
+4. **commands/status.md, fix.md** — Script added or renamed? Update the step-by-step instructions.
+5. **scripts/verify** — New issue type? Add a check function and document the issue type in the script header.
+
+If a case was previously marked "not fixable" but is now fixed, update both the original case and add a new one with the actual fix.
+
+When a Windows bug is reported, do NOT fix it directly on the machine. Instead: pattern-match the error → add detection to the scanner/verify → add automatic remediation to the pipeline. The goal is always **automated self-healing** through win-hooks, not one-off manual fixes.
+
+Commit messages: one bullet per line, no line wrapping within a bullet. No co-author tags.
+
+Version bump: every commit must update `version` in both `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. Follow semver — `feat:` bumps minor, `fix:/docs:/refactor:` bumps patch. A full architectural rewrite (e.g., language migration) bumps minor. Every version bump must also get a `v{major}.{minor}.{patch}` git tag on that commit.
