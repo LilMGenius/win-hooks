@@ -76,8 +76,60 @@ generate_wrapper() {
   printf '#!/bin/bash\nif ! command -v "%s" &>/dev/null; then\n  exit 0\nfi\n%s\n' "$dep" "$cmd"
 }
 
+# Sanitize a file: strip UTF-8 BOM and normalize CRLF -> LF.
+# Pure bash — no external runtime needed (uses od + sed from coreutils).
+sanitize_file() {
+  local file="$1"
+  # Strip BOM (EF BB BF) if present at start of file
+  local bom
+  bom=$(od -A n -t x1 -N 3 "$file" 2>/dev/null | tr -d ' \n')
+  if [[ "$bom" == "efbbbf" ]]; then
+    tail -c +4 "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+  fi
+  # Normalize CRLF -> LF (sed 's/\r$//' is GNU sed, shipped with Git Bash)
+  sed -i 's/\r$//' "$file" 2>/dev/null || {
+    sed 's/\r$//' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+  }
+}
+
+# Validate that a file contains valid JSON.
+# Fallback chain: node (guaranteed by Claude Code) -> powershell -> skip.
+# Returns 0 if valid, 1 if invalid. Prints error on failure.
+validate_json() {
+  local file="$1"
+  # Try node (guaranteed — Claude Code runs on Node.js)
+  if command -v node &>/dev/null; then
+    node -e "
+try {
+  const fs = require('fs');
+  let text = fs.readFileSync(process.argv[1], 'utf8').replace(/^\uFEFF/, '');
+  JSON.parse(text);
+} catch(e) {
+  process.stderr.write('JSON invalid: ' + e.message + '\n');
+  process.exit(1);
+}
+" "$file" 2>&1
+    return $?
+  fi
+  # Try powershell (Windows built-in)
+  if command -v powershell.exe &>/dev/null; then
+    local ps_path
+    ps_path=$(cygpath -w "$file" 2>/dev/null || echo "$file")
+    powershell.exe -NoProfile -Command "
+try { Get-Content -Raw -Encoding UTF8 '$ps_path' | ConvertFrom-Json | Out-Null }
+catch { Write-Error \$_.Exception.Message; exit 1 }
+" 2>&1
+    return $?
+  fi
+  # No JSON validator — skip with warning
+  echo "win-hooks: no JSON validator available (node/powershell)" >&2
+  return 0
+}
+
 # Replace a command string in hooks.json using exact (literal) matching.
 # Uses awk index() which is not regex-based, so no escaping issues.
+# After replacement: strips BOM, normalizes CRLF, validates JSON.
+# If validation fails, restores from .bak and reports error.
 patch_hooks_json() {
   local hooks_file="$1"
   export _PATCH_OLD="$2" _PATCH_NEW="$3"
@@ -93,6 +145,22 @@ patch_hooks_json() {
     }
   ' "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
   unset _PATCH_OLD _PATCH_NEW
+
+  # Sanitize output (BOM + CRLF)
+  sanitize_file "$hooks_file"
+
+  # Validate JSON — restore backup if broken
+  local err
+  if err=$(validate_json "$hooks_file"); then
+    : # valid
+  else
+    echo "win-hooks: patched JSON is invalid, restoring backup: $hooks_file" >&2
+    [[ -n "$err" ]] && echo "  $err" >&2
+    if [[ -f "${hooks_file}.bak" ]]; then
+      cp "${hooks_file}.bak" "$hooks_file"
+    fi
+    return 1
+  fi
 }
 
 # Track which hooks files have been set up
@@ -110,6 +178,8 @@ while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
     mkdir -p "$scripts_dir"
     [[ ! -f "${scripts_dir}/run-hook.cmd" ]] && cp "$TEMPLATE_CMD" "${scripts_dir}/run-hook.cmd"
     [[ ! -f "${hooks_file}.bak" ]] && cp "$hooks_file" "${hooks_file}.bak"
+    # Pre-sanitize: strip BOM/CRLF before any patching so awk works cleanly
+    sanitize_file "$hooks_file"
     SETUP_DONE[$hooks_file]=1
   fi
 

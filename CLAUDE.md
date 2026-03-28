@@ -1,0 +1,153 @@
+# Win-Hooks: Known Edge Cases & Scenarios
+
+All discovered Windows compatibility issues that win-hooks detects, fixes, or documents.
+Each case includes: symptom, root cause, detection method, and fix.
+
+---
+
+## Encoding & Line Endings
+
+### CASE-01: UTF-8 BOM in hooks.json
+- **Symptom**: `Hook load failed: JSON Parse error: Unrecognized token ''`
+- **Root cause**: Windows editors (Notepad, etc.) insert UTF-8 BOM (`EF BB BF`) at the start of files. Claude Code's JSON parser (JavaScriptCore) does not skip BOM, interprets it as an empty/invalid token.
+- **Detection**: `od -A n -t x1 -N 3 hooks.json` → `ef bb bf`
+- **Fix**: `apply-patches` pre-sanitizes BOM before patching. `verify --fix` strips BOM from any hooks.json.
+- **Discovered**: 2026-03-28 — `unknown/` cached versions of learning-output-style and explanatory-output-style had BOM.
+
+### CASE-02: CRLF line endings in hooks.json
+- **Symptom**: Subtle parsing issues. Bash `read` includes `\r` in values, breaking string comparisons. Some JSON parsers choke on `\r\n`.
+- **Root cause**: Windows `core.autocrlf=true` or editors saving with CRLF. Original plugin files from git may have CRLF if no `.gitattributes` enforces LF.
+- **Detection**: `grep -cP '\r\n' hooks.json` or `od` inspection.
+- **Fix**: `apply-patches` normalizes CRLF→LF. `verify --fix` repairs.
+
+### CASE-03: CRLF in bash scripts breaks execution
+- **Symptom**: `bash: ./script: /bin/bash^M: bad interpreter` or silent failures.
+- **Root cause**: `core.autocrlf=true` converts LF→CRLF on checkout. Bash requires LF.
+- **Fix**: `.gitattributes` with `* text=auto eol=lf` and explicit rules for scripts.
+- **Discovered**: 2026-03-16 — cross-machine patching failures. All scripts had CRLF on fresh clone.
+
+---
+
+## JSON & Patching
+
+### CASE-04: awk passes BOM through to output
+- **Symptom**: Patched hooks.json retains BOM from original, causing CASE-01.
+- **Root cause**: `patch_hooks_json()` uses awk which copies all bytes including BOM.
+- **Fix**: `sanitize_file()` runs after awk patching to strip BOM. Also pre-sanitizes before patching so awk input is clean.
+
+### CASE-05: Patched JSON validation failure
+- **Symptom**: After patching, hooks.json is invalid JSON (syntax error, truncation, etc.)
+- **Root cause**: Text replacement via awk `index()` can produce invalid JSON if the replacement string has unbalanced quotes or the search string matches partially.
+- **Detection**: `validate_json()` checks after each patch operation.
+- **Fix**: If validation fails, auto-restores from `.bak` backup.
+
+### CASE-06: installed_plugins.json v2 format parsing
+- **Symptom**: Plugin scanner finds zero plugins; all checks pass vacuously.
+- **Root cause**: v2 format wraps plugins under `{"version": 2, "plugins": {"name@source": [...]}}`. Parser expected flat `{"name": [...]}`.
+- **Fix**: `verify` handles `data.get("plugins", data)`. `find-incompatible` awk works by accident (matches `": [` pattern which skips `"plugins": {`).
+
+---
+
+## Hook Commands
+
+### CASE-07: `.sh` scripts called directly
+- **Symptom**: Hook fails — cmd.exe cannot execute `.sh` files.
+- **Root cause**: Plugin hooks reference `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` directly.
+- **Detection**: `find-incompatible` checks for `.sh` in command string.
+- **Fix**: Create extensionless bash wrapper in `_hooks/`, route through `run-hook.cmd` polyglot.
+
+### CASE-08: Bare Unix commands not in PATH
+- **Symptom**: Hook fails — command not found (e.g., `semgrep`, `shellcheck`).
+- **Root cause**: Plugin hooks call Unix binaries not installed on Windows.
+- **Detection**: `find-incompatible` checks `command -v` for bare commands.
+- **Fix**: Create wrapper with `command -v` check; exit 0 gracefully if missing.
+
+### CASE-09: `python3` not found on Windows
+- **Symptom**: Plugins calling `python3` fail — Windows has `python.exe` but not `python3.exe`.
+- **Root cause**: Windows Python installer doesn't create `python3` symlink.
+- **Detection**: `command -v python3` fails.
+- **Fix**: `patch-all` copies `python.exe` → `python3.exe` in same directory.
+
+### CASE-10: Bare command extra_args redundancy
+- **Symptom**: Hook runs with duplicated arguments (e.g., `semgrep mcp -k X` becomes wrapper that runs `semgrep mcp -k X` + hook appends `mcp -k X` again).
+- **Root cause**: `apply-patches` preserved extra_args for all commands, but bare commands already encode the full invocation in the wrapper.
+- **Fix**: Only append extra_args for `${CLAUDE_PLUGIN_ROOT}` paths, not bare commands.
+- **Discovered**: 2026-03-16.
+
+---
+
+## Plugin Environment
+
+### CASE-11: `$CLAUDE_PLUGIN_ROOT` not available in Bash tool
+- **Symptom**: `/win-hooks:fix` command fails — `$CLAUDE_PLUGIN_ROOT` is empty.
+- **Root cause**: `$CLAUDE_PLUGIN_ROOT` is only set during hook execution, not in Bash tool context.
+- **Detection**: Variable is empty when command runs.
+- **Fix**: Commands/skills parse `installed_plugins.json` with awk to find the install path dynamically.
+- **Discovered**: 2026-03-16.
+
+### CASE-12: Multiple cached plugin versions
+- **Symptom**: Patching one version doesn't fix the active one; errors persist.
+- **Root cause**: `~/.claude/plugins/cache/<source>/<name>/` contains multiple version dirs (e.g., `61c0597779bd/`, `78497c524da3/`, `unknown/`). Only the one in `installed_plugins.json` is active.
+- **Detection**: `installed_plugins.json` `installPath` points to the active version.
+- **Fix**: Scanner reads `installed_plugins.json` to find active install paths, not all cached versions.
+
+### CASE-13: Plugin update overwrites patches
+- **Symptom**: After plugin update, hooks break again.
+- **Root cause**: Plugin update replaces hooks.json and removes _hooks/ wrappers.
+- **Fix**: `patch-all` runs at every SessionStart, automatically re-patches.
+
+### CASE-14: Hand-patched files give false impression
+- **Symptom**: Plugin works on developer's machine but fails on others.
+- **Root cause**: Developer manually fixed files on their machine (not via the pipeline), so the pipeline was never tested.
+- **Detection**: Compare hooks.json content against what the pipeline would produce.
+- **Fix**: Always test on a clean install. The pipeline must be the sole source of truth.
+- **Discovered**: 2026-03-16.
+
+---
+
+## Scanner & Verification
+
+### CASE-15: Scanner returns empty but hooks are broken
+- **Symptom**: `find-incompatible` outputs nothing, but plugins error on load.
+- **Root cause**: Scanner only detects *incompatible commands* (`.sh`, bare commands). It doesn't check for encoding corruption (BOM, CRLF, broken JSON).
+- **Fix**: `verify` script performs post-patch health checks: JSON validity, BOM, CRLF, wrapper existence. Integrated into `patch-all` pipeline.
+- **Discovered**: 2026-03-28.
+
+### CASE-16: Missing wrapper scripts
+- **Symptom**: Hook errors — `_hooks/run-hook.cmd` or wrapper script not found.
+- **Root cause**: Patch applied to hooks.json but wrapper file wasn't created (interrupted patching, disk error, etc.)
+- **Detection**: `verify` checks that every `_hooks/` reference in hooks.json has a corresponding file.
+- **Fix**: Re-run `patch-all` to recreate missing wrappers.
+
+---
+
+## Error Suppression
+
+### CASE-17: Silent error suppression hides failures
+- **Symptom**: No error output, but hooks don't work. User thinks everything is fine.
+- **Root cause**: Previous version used `>/dev/null 2>&1 || true` to suppress all pipeline errors.
+- **Fix**: Removed suppression. Pipeline errors now surface to stderr. `patch-all` exits with error code on failure.
+- **Discovered**: 2026-03-16.
+
+---
+
+## External / Not Fixable by win-hooks
+
+### CASE-18: Node.js path mangling in other plugins
+- **Symptom**: `Cannot find module 'C:\Users\smsme\Userssmsme.configaincreport-usage.js'` — backslashes eaten, path mangled.
+- **Root cause**: Bug in the affected plugin's path handling (backslash used as escape in string interpolation).
+- **Note**: This is NOT a win-hooks issue. Report to the plugin author.
+
+### CASE-19: Double-slash in CLAUDE_PLUGIN_ROOT
+- **Symptom**: Paths like `C://Users//smsme//.claude//...` in error messages.
+- **Root cause**: Claude Code or the shell normalizes Windows paths with double forward slashes.
+- **Note**: Usually harmless — most programs handle `//` fine. But can cause confusion in error messages.
+
+---
+
+## Runtime Dependencies
+
+### CASE-20: Python not installed
+- **Symptom**: `sanitize_file()`, `validate_json()`, `verify` all fail if Python is the only JSON runtime.
+- **Root cause**: User doesn't have Python installed. Common for non-developer Windows users.
+- **Fix**: Python dependency removed. Fallback chain for JSON operations: `node` (guaranteed by Claude Code) → `powershell.exe` (Windows built-in) → skip with warning. BOM/CRLF sanitization is pure bash (od + sed).

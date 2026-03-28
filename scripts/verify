@@ -1,0 +1,177 @@
+#!/bin/bash
+# win-hooks: verify
+# Post-patch health check for all installed plugins' hooks.
+# Detects: invalid JSON, BOM, CRLF, missing wrappers, broken references.
+#
+# Dependencies: only coreutils (od, sed, grep, awk) + Git Bash.
+# JSON validation uses fallback chain: node (guaranteed) -> powershell -> skip.
+#
+# Output: tab-separated lines to stdout:
+#   plugin\tinstall_path\tissue_type\tdetail
+#
+# Issue types:
+#   json_invalid   — hooks.json is not valid JSON
+#   json_bom       — hooks.json starts with UTF-8 BOM (EF BB BF)
+#   json_crlf      — hooks.json contains CRLF line endings
+#   wrapper_missing — hooks.json references _hooks/ wrapper that doesn't exist
+#   cmd_missing     — _hooks/run-hook.cmd is missing but hooks.json references it
+#
+# Exit code: number of issues found (0 = healthy, capped at 125)
+#
+# Usage: verify [--fix]
+#   --fix: auto-repair BOM/CRLF issues in-place
+
+set -uo pipefail
+
+FIX_MODE=false
+[[ "${1:-}" == "--fix" ]] && FIX_MODE=true
+
+INSTALLED="${HOME}/.claude/plugins/installed_plugins.json"
+[[ ! -f "$INSTALLED" ]] && exit 0
+
+ISSUES_FILE=$(mktemp)
+trap 'rm -f "$ISSUES_FILE"' EXIT
+
+# ── Helpers ────────────────────────────────────────────────────────
+
+add_issue() {
+  local plugin="$1" path="$2" type="$3" detail="$4"
+  printf '%s\t%s\t%s\t%s\n' "$plugin" "$path" "$type" "$detail" >> "$ISSUES_FILE"
+  printf '%s\t%s\t%s\t%s\n' "$plugin" "$path" "$type" "$detail"
+}
+
+# Strip UTF-8 BOM (EF BB BF) if present.
+strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
+
+# Validate JSON using fallback chain: node (guaranteed) -> powershell -> skip.
+validate_json() {
+  local file="$1"
+  # node (guaranteed — Claude Code runs on Node.js)
+  if command -v node &>/dev/null; then
+    node -e "
+try {
+  const fs = require('fs');
+  let t = fs.readFileSync(process.argv[1],'utf8').replace(/^\uFEFF/,'');
+  JSON.parse(t);
+} catch(e) {
+  process.stderr.write(e.message);
+  process.exit(1);
+}
+" "$file" 2>&1
+    return $?
+  fi
+  # powershell (Windows built-in)
+  if command -v powershell.exe &>/dev/null; then
+    local ps_path
+    ps_path=$(cygpath -w "$file" 2>/dev/null || echo "$file")
+    powershell.exe -NoProfile -Command "
+try { Get-Content -Raw -Encoding UTF8 '$ps_path' | ConvertFrom-Json | Out-Null }
+catch { Write-Error \$_.Exception.Message; exit 1 }
+" 2>&1
+    return $?
+  fi
+  # No validator available
+  return 0
+}
+
+# Parse installed_plugins.json -> tab-separated: plugin_name\tinstall_path
+# Handles v2 format: {"version":2, "plugins":{"name@source":[{"installPath":...}]}}
+parse_plugins() {
+  strip_bom < "$INSTALLED" | awk '
+    /": \[/ {
+      sub(/^[[:space:]]*"/, "")
+      sub(/".*/, "")
+      plugin = $0
+      next
+    }
+    /"installPath"/ {
+      sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
+      sub(/".*/, "")
+      path = $0
+      if (plugin != "" && path != "") print plugin "\t" path
+    }
+  ' | sed 's/[\\][\\]*/\//g'
+}
+
+# ── Checks ─────────────────────────────────────────────────────────
+
+check_bom() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local bom
+  bom=$(od -A n -t x1 -N 3 "$hooks_file" 2>/dev/null | tr -d ' \n')
+  if [[ "$bom" == "efbbbf" ]]; then
+    add_issue "$plugin" "$install_path" "json_bom" "UTF-8 BOM detected"
+    if $FIX_MODE; then
+      tail -c +4 "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
+      echo "  FIXED: stripped BOM from $hooks_file" >&2
+    fi
+  fi
+}
+
+check_crlf() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  if od -c "$hooks_file" 2>/dev/null | grep -q '\\r  \\n'; then
+    add_issue "$plugin" "$install_path" "json_crlf" "CRLF line endings detected"
+    if $FIX_MODE; then
+      sed -i 's/\r$//' "$hooks_file" 2>/dev/null || {
+        sed 's/\r$//' "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
+      }
+      echo "  FIXED: normalized CRLF in $hooks_file" >&2
+    fi
+  fi
+}
+
+check_json_valid() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local err
+  err=$(validate_json "$hooks_file" 2>&1) || {
+    add_issue "$plugin" "$install_path" "json_invalid" "$err"
+    return 1
+  }
+  return 0
+}
+
+check_wrappers() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  # Extract _hooks/ references using grep (no JSON parser needed)
+  grep -o '_hooks/run-hook\.cmd[^"]*' "$hooks_file" 2>/dev/null | while IFS= read -r ref; do
+    # ref: _hooks/run-hook.cmd\" wrapper-name  or  _hooks/run-hook.cmd\\" wrapper-name
+    local wrapper
+    wrapper=$(printf '%s' "$ref" | sed 's|_hooks/run-hook\.cmd[\\\"]*[[:space:]]*||' | awk '{print $1}')
+    [[ -z "$wrapper" ]] && continue
+
+    local hooks_dir="${install_path}/_hooks"
+    if [[ ! -f "${hooks_dir}/run-hook.cmd" ]]; then
+      add_issue "$plugin" "$install_path" "cmd_missing" "_hooks/run-hook.cmd not found"
+    fi
+    if [[ ! -f "${hooks_dir}/${wrapper}" ]]; then
+      add_issue "$plugin" "$install_path" "wrapper_missing" "_hooks/${wrapper} not found"
+    fi
+  done
+}
+
+# ── Main scan ──────────────────────────────────────────────────────
+
+while IFS=$'\t' read -r plugin install_path; do
+  [[ "$plugin" == *"win-hooks"* ]] && continue
+  hooks_file="${install_path}/hooks/hooks.json"
+  [[ ! -f "$hooks_file" ]] && continue
+
+  # Run checks (fix BOM/CRLF before JSON validation)
+  check_bom "$plugin" "$install_path" "$hooks_file"
+  check_crlf "$plugin" "$install_path" "$hooks_file"
+  if check_json_valid "$plugin" "$install_path" "$hooks_file"; then
+    check_wrappers "$plugin" "$install_path" "$hooks_file"
+  fi
+done < <(parse_plugins)
+
+# ── Summary ────────────────────────────────────────────────────────
+
+issues=$(wc -l < "$ISSUES_FILE" | tr -d ' ')
+if [[ "$issues" -eq 0 ]]; then
+  echo "win-hooks verify: all plugins healthy" >&2
+else
+  echo "win-hooks verify: $issues issue(s) found" >&2
+fi
+
+exit $(( issues > 125 ? 125 : issues ))

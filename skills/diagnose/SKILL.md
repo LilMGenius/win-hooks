@@ -4,6 +4,8 @@ description: |
   Diagnoses and fixes Claude Code plugin hook compatibility issues on Windows.
   Use this skill when:
   - "hook error", "hook 에러", "훅 에러" occurs at SessionStart, UserPromptSubmit, PostToolUse, Stop, or any other event
+  - "JSON Parse error", "Unrecognized token" in hook load errors
+  - "Hook load failed" errors for any plugin
   - After installing or updating plugins on Windows
   - "fix hooks", "patch hooks", "훅 수정", "플러그인 호환성" requests
   - Any hook-related error message on Windows (win32 platform)
@@ -13,6 +15,29 @@ description: |
 # Win-Hooks Diagnostics
 
 Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
+
+## Common Error Patterns
+
+### "JSON Parse error: Unrecognized token ''"
+**Root cause**: UTF-8 BOM (EF BB BF) at the start of hooks.json. Claude Code's JSON parser interprets the invisible BOM bytes as an empty token.
+**Fix**: Run `verify --fix` to strip BOM, or `/win-hooks:fix`.
+
+### "Hook load failed: JSON Parse error"
+**Root causes** (check in order):
+1. UTF-8 BOM in hooks.json
+2. CRLF line endings causing parser issues
+3. Corrupted hooks.json from interrupted patching
+4. Invalid JSON syntax from bad text replacement
+
+**Fix**: Run `/win-hooks:fix` which runs the full pipeline including `verify --fix`.
+
+### "No such file or directory" for hook command
+**Root cause**: Hook references a `.sh` script or bare command that doesn't exist on Windows.
+**Fix**: Run `/win-hooks:fix` to create polyglot wrappers.
+
+### "MODULE_NOT_FOUND" in Node.js hooks
+**Root cause**: Backslashes in Windows paths being eaten during string processing, producing mangled paths like `C:\Users\smsme\Userssmsme.configaincreport-usage.js`.
+**Note**: This is typically a bug in the affected plugin itself, not something win-hooks can fix. Report to the plugin author.
 
 ## Why Hooks Break on Windows
 
@@ -28,93 +53,78 @@ Most Claude Code plugins are developed on Unix. Their hooks use:
 
 Check that platform is `win32`. If not, this skill does not apply.
 
-### Step 2: Scan All Plugins
+### Step 2: Find win-hooks install path
 
 ```bash
-# Find all hooks.json files for active plugins
-find ~/.claude/plugins/cache -name "hooks.json" -not -path "*/.git/*" \
-  -exec echo "=== {} ===" \; -exec cat {} \;
+sed '1s/^\xEF\xBB\xBF//' ~/.claude/plugins/installed_plugins.json | awk '
+  /win-hooks/ { found=1 }
+  found && /"installPath"/ {
+    sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
+    sub(/".*/, "")
+    print
+    exit
+  }
+' | sed 's/[\\][\\]*/\//g'
 ```
 
-### Step 3: Classify Each Hook Command
+Save the output path as PLUGIN_ROOT.
 
-For each `"command"` value in hooks.json, classify:
+### Step 3: Run health check
 
-| Pattern | Example | Verdict |
-|---------|---------|---------|
-| Uses `.cmd` wrapper | `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" script` | COMPATIBLE - skip |
-| Direct `.sh` call | `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` | INCOMPATIBLE - fix |
-| Bare command not in PATH | `semgrep mcp -k foo` | INCOMPATIBLE - fix |
-| `python3` / `python` call | `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/foo.py` | CHECK - test if python3 exists |
-| `node` / `npx` call | `node ${CLAUDE_PLUGIN_ROOT}/server.js` | USUALLY OK - verify |
-| Shell pipeline | `cmd1 \| cmd2` | INCOMPATIBLE - fix |
+```bash
+bash "<PLUGIN_ROOT>/scripts/verify"
+```
 
-### Step 4: Report Findings
+This detects:
+| Issue Type | Meaning |
+|------------|---------|
+| json_invalid | hooks.json is not valid JSON |
+| json_bom | UTF-8 BOM detected (causes "Unrecognized token ''") |
+| json_crlf | CRLF line endings (can cause subtle parsing issues) |
+| wrapper_missing | Patched hook references nonexistent wrapper script |
+| cmd_missing | _hooks/run-hook.cmd is missing |
+
+### Step 4: Run incompatibility scanner
+
+```bash
+bash "<PLUGIN_ROOT>/scripts/find-incompatible"
+```
+
+### Step 5: Report Findings
 
 Present a table:
 ```
-| Plugin | Event | Command | Status |
-|--------|-------|---------|--------|
-| name   | type  | cmd...  | OK/FIX |
+| Plugin | Issue | Detail | Status |
+|--------|-------|--------|--------|
+| name   | type  | info   | OK/FIX |
 ```
 
 ## Fix Procedure
 
-### For Each Incompatible Plugin:
-
-#### 1. Backup hooks.json
-```bash
-cp <plugin>/hooks/hooks.json <plugin>/hooks/hooks.json.bak
-```
-
-#### 2. Copy run-hook.cmd Template
-
-The win-hooks plugin includes a polyglot `.cmd` template at `${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd`. Copy it to the target plugin's `_hooks/` directory (dedicated wrapper directory — never use the plugin's own `hooks/` or `scripts/`):
+### Automatic (recommended)
 
 ```bash
-mkdir -p "<target-plugin>/_hooks"
-cp "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" "<target-plugin>/_hooks/run-hook.cmd"
+bash "<PLUGIN_ROOT>/hooks/patch-all"
 ```
 
-This polyglot file works on both cmd.exe (Windows) and bash (Unix):
-- Windows: cmd.exe runs the batch portion, finds Git Bash, delegates
-- Unix: bash runs the script portion directly
+This runs the full pipeline:
+1. `find-incompatible` → detects incompatible hooks
+2. `apply-patches` → creates wrappers, patches hooks.json (sanitizes BOM/CRLF, validates JSON)
+3. `verify --fix` → auto-repairs any remaining encoding issues
 
-#### 3. Create Extensionless Wrapper Scripts
+### Manual repair for specific files
 
-For each incompatible command, create a wrapper script WITHOUT file extension:
-
-**For `.sh` script calls:**
+For BOM/CRLF issues only:
 ```bash
-#!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-exec bash "$PLUGIN_ROOT/<relative-path-to-original>.sh" "$@"
+bash "<PLUGIN_ROOT>/scripts/verify" --fix
 ```
 
-**For bare commands (may not be installed):**
+For restoring a broken hooks.json from backup:
 ```bash
-#!/bin/bash
-if ! command -v <dependency> &>/dev/null; then
-  exit 0  # Graceful exit if not installed
-fi
-<original-command>
+cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
 ```
 
-Naming: use the command's key action, extensionless
-- `semgrep mcp -k inject-secure-defaults` -> `inject-secure-defaults`
-- `check_version.sh` -> `check-version`
-- `session-start.sh` -> `session-start`
-
-#### 4. Update hooks.json
-
-Replace each incompatible command:
-```json
-// Before:
-"command": "${CLAUDE_PLUGIN_ROOT}/scripts/check_version.sh"
-// After:
-"command": "\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" check-version"
-```
+Then re-run patch-all.
 
 ## Hook Event Types
 
@@ -149,8 +159,8 @@ cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
 - Run with debug: `claude --debug hooks` to see hook execution details
 
 **python3 not found (other plugins):**
-- win-hooks automatically copies `python.exe` → `python3.exe` if `python3` is missing, so other plugins that call `python3` will work
-- If Python is not installed at all, plugins that require Python will still fail — install Python to fix
+- win-hooks automatically copies `python.exe` → `python3.exe` if `python3` is missing
+- If Python is not installed at all, plugins that require Python will still fail
 
 **Plugin update overwrites fix:**
 - This is expected. Restart Claude Code and win-hooks will re-patch automatically.

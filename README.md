@@ -49,14 +49,15 @@ That's it. Next session, win-hooks silently patches every broken plugin before y
 Every time Claude Code starts, win-hooks runs a pipeline:
 
 ```
-scan all plugins → detect incompatible hooks → generate wrappers → patch hooks.json
+scan all plugins → detect incompatible hooks → generate wrappers → patch hooks.json → verify & auto-repair
 ```
 
 1. **Scans** `~/.claude/plugins/installed_plugins.json` for all installed plugins
 2. **Detects** `.sh` scripts, missing binaries, and Unix-only commands
 3. **Creates** a polyglot `.cmd` entry point and extensionless bash wrappers
 4. **Patches** each plugin's `hooks.json` (originals backed up as `.bak`)
-5. **Skips** anything already compatible — safe to run a thousand times
+5. **Verifies** patched files — strips BOM, normalizes CRLF, validates JSON
+6. **Skips** anything already compatible — safe to run a thousand times
 
 ## How It Works
 
@@ -111,7 +112,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 ## Requirements
 
 - **Windows 10/11** with [Git for Windows](https://gitforwindows.org/)
-- **Claude Code** CLI
+- **Claude Code** CLI (includes Node.js, used for JSON validation)
 
 > **Bonus**: win-hooks auto-creates a `python3` alias if only `python.exe` exists — so other plugins that call `python3` won't break either.
 
@@ -127,6 +128,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
 | `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
+| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
 | `commands/status.md` | `/win-hooks:status` command definition |
 | `skills/diagnose/` | Diagnostic skill for hook errors |

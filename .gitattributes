@@ -6,6 +6,7 @@ hooks/patch-all text eol=lf
 hooks/run-hook.cmd text eol=lf
 scripts/find-incompatible text eol=lf
 scripts/apply-patches text eol=lf
+scripts/verify text eol=lf
 *.sh text eol=lf
 *.json text eol=lf
 *.md text eol=lf

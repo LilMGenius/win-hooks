@@ -54,10 +54,9 @@ parse_plugins() {
       sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
       sub(/".*/, "")
       path = $0
-      gsub(/\\\\/, "/", path)
       if (plugin != "" && path != "") print plugin "\t" path
     }
-  '
+  ' | sed 's/[\\][\\]*/\//g'
 }
 
 # Extract hook commands from a hooks.json file — output: event\tcommand

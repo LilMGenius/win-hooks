@@ -51,3 +51,13 @@ if echo "$RESULT" | grep -q "^PATCHED:"; then
   PATCHED=$(echo "$RESULT" | grep -c "^PATCHED:")
   echo "win-hooks: patched $PATCHED plugin(s)" >&2
 fi
+
+# ── Post-patch verification ─────────────────────────────────────────
+# Run verify --fix to detect and auto-repair any remaining issues
+# (BOM, CRLF, broken JSON, missing wrappers)
+if [[ -x "${SCRIPTS_DIR}/verify" ]] || [[ -f "${SCRIPTS_DIR}/verify" ]]; then
+  VERIFY_OUT=$(bash "${SCRIPTS_DIR}/verify" --fix 2>&1) || {
+    echo "win-hooks: verify found issues (auto-fixed where possible)" >&2
+    echo "$VERIFY_OUT" | grep -v "^win-hooks verify:" >&2
+  }
+fi
