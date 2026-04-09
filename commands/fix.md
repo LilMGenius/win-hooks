@@ -37,7 +37,7 @@ Replace `<PLUGIN_ROOT>` with the actual path from Step 1.
 This runs the full pipeline:
 1. `find-incompatible` scans all installed plugins for incompatible hooks
 2. `apply-patches` creates wrappers, patches hooks.json (with BOM/CRLF sanitization + JSON validation)
-3. `verify --fix` auto-repairs any remaining encoding issues (BOM, CRLF)
+3. `verify --fix` auto-repairs encoding issues (BOM in JSON and scripts, CRLF) and disables recursive wrappers
 
 ### Step 3: Show results
 

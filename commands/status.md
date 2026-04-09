@@ -31,12 +31,14 @@ Save the output path as PLUGIN_ROOT.
 bash "<PLUGIN_ROOT>/scripts/verify"
 ```
 
-This checks ALL installed plugins' hooks.json for:
+This checks ALL installed plugins' hooks for:
+- **bom**: UTF-8 BOM in any file under hooks/ or _hooks/ (crashes JSON parser, breaks bash/shebang)
 - **json_invalid**: Broken/unparseable JSON
-- **json_bom**: UTF-8 BOM bytes that crash Claude Code's parser
 - **json_crlf**: CRLF line endings that can cause issues
 - **wrapper_missing**: Patched hook references a wrapper script that doesn't exist
 - **cmd_missing**: Missing run-hook.cmd in _hooks/ directory
+- **recursive_wrapper**: Bash wrapper (.py/.js) calls python3/node on itself
+- **backslash_path**: settings.json hook commands contain Windows backslash paths
 
 ### Step 3: Run the incompatibility scanner
 
@@ -57,10 +59,11 @@ Use these indicators:
 - **HEALTHY**: No issues found, hooks.json is valid and compatible
 - **INCOMPATIBLE**: Uses `.sh` scripts or missing binaries (from scanner)
 - **PATCHED**: Has a `.bak` file, meaning win-hooks has previously applied a fix
-- **BOM**: hooks.json has UTF-8 BOM — run `/win-hooks:fix` to repair
+- **BOM**: File has UTF-8 BOM — run `/win-hooks:fix` to repair
 - **CRLF**: hooks.json has CRLF line endings — run `/win-hooks:fix` to repair
 - **BROKEN**: hooks.json is invalid JSON — check `.bak` for recovery
 - **MISSING WRAPPER**: Patched hook references a wrapper that doesn't exist
+- **RECURSIVE**: Bash wrapper calls interpreter on itself — run `/win-hooks:fix` to disable
 
 To check for patched plugins:
 ```bash

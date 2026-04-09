@@ -10,11 +10,13 @@
 #   plugin\tinstall_path\tissue_type\tdetail
 #
 # Issue types:
-#   json_invalid   — hooks.json is not valid JSON
-#   json_bom       — hooks.json starts with UTF-8 BOM (EF BB BF)
-#   json_crlf      — hooks.json contains CRLF line endings
-#   wrapper_missing — hooks.json references _hooks/ wrapper that doesn't exist
-#   cmd_missing     — _hooks/run-hook.cmd is missing but hooks.json references it
+#   bom               — UTF-8 BOM (EF BB BF) in any file under hooks/ or _hooks/
+#   json_invalid      — hooks.json is not valid JSON
+#   json_crlf         — hooks.json contains CRLF line endings
+#   wrapper_missing   — hooks.json references _hooks/ wrapper that doesn't exist
+#   cmd_missing       — _hooks/run-hook.cmd is missing but hooks.json references it
+#   recursive_wrapper — bash wrapper (.py/.js) calls python3/node on itself
+#   backslash_path    — settings.json hook command contains Windows backslash paths
 #
 # Exit code: number of issues found (0 = healthy, capped at 125)
 #
@@ -96,16 +98,23 @@ parse_plugins() {
 # ── Checks ─────────────────────────────────────────────────────────
 
 check_bom() {
-  local plugin="$1" install_path="$2" hooks_file="$3"
-  local bom
-  bom=$(od -A n -t x1 -N 3 "$hooks_file" 2>/dev/null | tr -d ' \n')
-  if [[ "$bom" == "efbbbf" ]]; then
-    add_issue "$plugin" "$install_path" "json_bom" "UTF-8 BOM detected"
-    if $FIX_MODE; then
-      tail -c +4 "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
-      echo "  FIXED: stripped BOM from $hooks_file" >&2
-    fi
-  fi
+  local plugin="$1" install_path="$2"
+  for dir in "${install_path}/hooks" "${install_path}/_hooks"; do
+    [[ ! -d "$dir" ]] && continue
+    for f in "$dir"/*; do
+      [[ ! -f "$f" ]] && continue
+      case "$f" in *.json.bak|*.tmp) continue ;; esac
+      local bom
+      bom=$(od -A n -t x1 -N 3 "$f" 2>/dev/null | tr -d ' \n')
+      if [[ "$bom" == "efbbbf" ]]; then
+        add_issue "$plugin" "$install_path" "bom" "$(basename "$f")"
+        if $FIX_MODE; then
+          tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+          echo "  FIXED: stripped BOM from $(basename "$f")" >&2
+        fi
+      fi
+    done
+  done
 }
 
 check_crlf() {
@@ -150,6 +159,30 @@ check_wrappers() {
   done
 }
 
+check_recursive_wrapper() {
+  local plugin="$1" install_path="$2"
+  for dir in "${install_path}/hooks" "${install_path}/_hooks"; do
+    [[ ! -d "$dir" ]] && continue
+    for f in "$dir"/*.py "$dir"/*.js; do
+      [[ ! -f "$f" ]] && continue
+      # Check if it's actually a bash script (not real Python/JS)
+      local first_line
+      first_line=$(head -c 64 "$f" | tr -d '\r' | sed 's/^\xEF\xBB\xBF//' | head -1)
+      [[ "$first_line" != "#!/bin/bash"* && "$first_line" != "#!/usr/bin/env bash"* ]] && continue
+      # Check if the script calls python3/node on the same filename
+      local base
+      base=$(basename "$f")
+      if grep -qE "(python3?|node)[[:space:]].*${base}" "$f" 2>/dev/null; then
+        add_issue "$plugin" "$install_path" "recursive_wrapper" "${base} calls interpreter on itself"
+        if $FIX_MODE; then
+          printf '#!/bin/bash\n# win-hooks: disabled — bash wrapper called interpreter on itself\nexit 0\n' > "$f"
+          echo "  FIXED: disabled recursive wrapper ${base}" >&2
+        fi
+      fi
+    done
+  done
+}
+
 # ── Main scan ──────────────────────────────────────────────────────
 
 while IFS=$'\t' read -r plugin install_path; do
@@ -158,8 +191,9 @@ while IFS=$'\t' read -r plugin install_path; do
   [[ ! -f "$hooks_file" ]] && continue
 
   # Run checks (fix BOM/CRLF before JSON validation)
-  check_bom "$plugin" "$install_path" "$hooks_file"
+  check_bom "$plugin" "$install_path"
   check_crlf "$plugin" "$install_path" "$hooks_file"
+  check_recursive_wrapper "$plugin" "$install_path"
   if check_json_valid "$plugin" "$install_path" "$hooks_file"; then
     check_wrappers "$plugin" "$install_path" "$hooks_file"
   fi

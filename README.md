@@ -2,7 +2,7 @@
 
 # win-hooks
 
-### *"Linux? Nah. Win-ux!"*
+### *"Linux? Nah. WinUX!"*
 
 **Don't let Windows kill your vibe coding flow.**
 
@@ -56,7 +56,7 @@ scan plugins → patch hooks.json → fix settings.json paths → verify & auto-
 2. **Detects** `.sh` scripts, missing binaries, and Unix-only commands
 3. **Creates** a polyglot `.cmd` entry point and extensionless bash wrappers
 4. **Patches** each plugin's `hooks.json` (originals backed up as `.bak`)
-5. **Verifies** patched files — strips BOM, normalizes CRLF, validates JSON
+5. **Verifies** patched files — strips BOM from JSON and scripts, normalizes CRLF, validates JSON, disables recursive wrappers
 6. **Skips** anything already compatible — safe to run a thousand times
 
 ## How It Works
@@ -128,7 +128,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
 | `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
-| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity |
+| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, script BOM, recursive wrappers |
 | `scripts/fix-backslash-paths` | Converts `C:\...` to `C:/...` in settings.json hooks |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
 | `commands/status.md` | `/win-hooks:status` command definition |

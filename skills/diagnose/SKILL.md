@@ -18,9 +18,9 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 
 ## Common Error Patterns
 
-### "JSON Parse error: Unrecognized token ''"
-**Root cause**: UTF-8 BOM (EF BB BF) at the start of hooks.json. Claude Code's JSON parser interprets the invisible BOM bytes as an empty token.
-**Fix**: Run `verify --fix` to strip BOM, or `/win-hooks:fix`.
+### "JSON Parse error: Unrecognized token ''" / "﻿:: command not found" / "﻿#!/bin/bash: No such file or directory"
+**Root cause**: UTF-8 BOM (EF BB BF) in any file under the plugin's hooks directory. In hooks.json it causes JSON parse errors; in `run-hook.cmd` it breaks bash's `:` builtin; in wrapper scripts it breaks shebang parsing. Typically caused by Windows editors or PowerShell `Out-File`.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` strips BOM from all files in hooks directories.
 
 ### "Hook load failed: JSON Parse error"
 **Root causes** (check in order):
@@ -30,6 +30,10 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 4. Invalid JSON syntax from bad text replacement
 
 **Fix**: Run `/win-hooks:fix` which runs the full pipeline including `verify --fix`.
+
+### "SyntaxError" from python3/node on a .py/.js hook file
+**Root cause**: Plugin ships bash wrapper scripts with `.py`/`.js` extension that call the interpreter on themselves (e.g., `pretooluse.py` is `#!/bin/bash` but contains `python3 pretooluse.py`). Python/Node can't parse bash syntax.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` disables recursive wrappers with `exit 0`.
 
 ### "No such file or directory" for hook command
 **Root cause**: Hook references a `.sh` script or bare command that doesn't exist on Windows.
@@ -78,11 +82,13 @@ bash "<PLUGIN_ROOT>/scripts/verify"
 This detects:
 | Issue Type | Meaning |
 |------------|---------|
+| bom | UTF-8 BOM in any file under hooks/ or _hooks/ |
 | json_invalid | hooks.json is not valid JSON |
-| json_bom | UTF-8 BOM detected (causes "Unrecognized token ''") |
-| json_crlf | CRLF line endings (can cause subtle parsing issues) |
+| json_crlf | CRLF line endings in hooks.json |
 | wrapper_missing | Patched hook references nonexistent wrapper script |
 | cmd_missing | _hooks/run-hook.cmd is missing |
+| recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |
+| backslash_path | settings.json hook command has Windows backslash paths |
 
 ### Step 4: Run incompatibility scanner
 
