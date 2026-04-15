@@ -18,9 +18,9 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 
 ## Common Error Patterns
 
-### "JSON Parse error: Unrecognized token ''" / "﻿:: command not found" / "﻿#!/bin/bash: No such file or directory"
-**Root cause**: UTF-8 BOM (EF BB BF) in any file under the plugin's hooks directory. In hooks.json it causes JSON parse errors; in `run-hook.cmd` it breaks bash's `:` builtin; in wrapper scripts it breaks shebang parsing. Typically caused by Windows editors or PowerShell `Out-File`.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` strips BOM from all files in hooks directories.
+### "JSON Parse error: Unrecognized token ''" / "﻿:: command not found" / "﻿#!/bin/bash: No such file or directory" / "<<(을)를 지정된 경로를 찾지 못했습니다"
+**Root cause**: UTF-8 BOM (EF BB BF) in any hook file. In hooks.json it causes JSON parse errors; in `run-hook.cmd` it breaks bash's `:` builtin AND it pushes the leading `:` off line-start so cmd.exe stops recognizing it as a label and instead parses the polyglot's `<<` heredoc opener as redirection (mojibake: `<<��(��) ������� �ʾҽ��ϴ�`); in wrapper scripts it breaks shebang parsing. Typically caused by Windows editors or PowerShell `Out-File`.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` strips BOM from every file in `hooks/`, `_hooks/`, and any file referenced from `hooks.json` (e.g., `scripts/run-hook.cmd` shipped by ralph-loop).
 
 ### "Hook load failed: JSON Parse error"
 **Root causes** (check in order):
@@ -43,8 +43,8 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 **Root cause**: Windows backslash paths in `settings.json` hook commands get mangled during execution — backslashes are interpreted as escape characters, producing paths like `Userssmsme.configaincreport-usage.js`.
 **Fix**: Run `/win-hooks:fix` which converts `C:\...` to `C:/...` in settings.json hooks via `fix-backslash-paths`.
 
-### "지정된 경로를 찾을 수 없습니다" / "The system cannot find the path specified" on Stop/SessionStart hooks
-**Root cause**: `settings.json` hook command starts with a bare interpreter (`node`, `python`, `python3`, `npx`, `npm`) that's on Git Bash's PATH but not resolvable by cmd.exe at hook launch. Error text may appear CP949-garbled (e.g. `<<��(��) ������� �ʾҽ��ϴ�`).
+### "'node' is not recognized as an internal or external command" / "'node'은(는) 내부 또는 외부 명령... 아닙니다" on Stop/SessionStart hooks
+**Root cause**: `settings.json` hook command starts with a bare interpreter (`node`, `python`, `python3`, `npx`, `npm`) that's on Git Bash's PATH but not resolvable by cmd.exe at hook launch. Error text may appear CP949-garbled (e.g. `'node'��(��) ���� �Ǵ� �ܺ� ����...`). **Note**: the similar-looking `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ������� �ʾҽ��ϴ�`) is a *different* error — that one is BOM-corrupted polyglot wrapper (see the BOM section above).
 **Fix**: Run `/win-hooks:fix` — `fix-bare-commands` rewrites the command to a quoted absolute path like `"C:/Program Files/nodejs/node.exe" <script>`.
 
 ## Why Hooks Break on Windows
@@ -86,7 +86,7 @@ bash "<PLUGIN_ROOT>/scripts/verify"
 This detects:
 | Issue Type | Meaning |
 |------------|---------|
-| bom | UTF-8 BOM in any file under hooks/ or _hooks/ |
+| bom | UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json) |
 | json_invalid | hooks.json is not valid JSON |
 | json_crlf | CRLF line endings in hooks.json |
 | wrapper_missing | Patched hook references nonexistent wrapper script |

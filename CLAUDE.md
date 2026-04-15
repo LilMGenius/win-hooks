@@ -9,9 +9,9 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 ## Encoding & Line Endings
 
 ### CASE-01: UTF-8 BOM in hook files
-- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (wrapper scripts)
-- **Root cause**: Windows editors / PowerShell `Out-File` insert UTF-8 BOM (`EF BB BF`). JSON parsers, bash builtins, and shebang parsing all choke on the invisible bytes.
-- **Fix**: `verify --fix` strips BOM from all files in `hooks/` and `_hooks/` via `tail -c +4`. `apply-patches` also pre-sanitizes before awk patching so BOM doesn't propagate (old CASE-04).
+- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (wrapper scripts) · `<<(을)를 지정된 경로를 찾지 못했습니다` / `<< was unexpected at this time` (CP949-garbled `<<��(��) ������� �ʾҽ��ϴ�`) when a polyglot `.cmd` wrapper has BOM — the BOM pushes `:` off line-start so cmd.exe stops treating it as a label, then parses `<<` (the heredoc opener meant for bash) as redirection.
+- **Root cause**: Windows editors / PowerShell `Out-File` insert UTF-8 BOM (`EF BB BF`). JSON parsers, bash builtins, shebang parsing, and cmd.exe label detection all choke on the invisible bytes.
+- **Fix**: `verify --fix` strips BOM from all files in `hooks/`, `_hooks/`, **and any file referenced from hooks.json via `${CLAUDE_PLUGIN_ROOT}/...`** (catches polyglot wrappers shipped in nonstandard subdirs like `scripts/`, e.g. ralph-loop). `apply-patches` also pre-sanitizes hooks.json before awk patching so BOM doesn't propagate (old CASE-04).
 - **Issue type**: `bom`
 
 ### CASE-02: CRLF line endings in hooks.json
@@ -116,7 +116,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Issue type**: `backslash_path`
 
 ### CASE-23: Bare interpreter commands in settings.json hooks
-- **Symptom**: Stop/SessionStart/etc. hook errors like `지정된 경로를 찾을 수 없습니다` / `The system cannot find the path specified` (CP949-garbled as `<<��(��) ������� �ʾҽ��ϴ�`). Hook command is `node <script>` or `python <script>`; the bare name is on Git Bash's PATH but not resolvable by cmd.exe at hook launch time.
+- **Symptom**: Stop/SessionStart/etc. hook errors like `'node'은(는) 내부 또는 외부 명령... 아닙니다` / `'node' is not recognized as an internal or external command` (CP949-garbled as `'node'��(��) ���� �Ǵ� �ܺ� ����...`). Hook command is `node <script>` or `python <script>`; the bare name is on Git Bash's PATH but not resolvable by cmd.exe at hook launch time. **Note**: do NOT confuse with the `<<` redirection error (`<<��(��) ������� �ʾҽ��ϴ�`) — that one is CASE-01 (BOM-corrupted polyglot `.cmd` wrapper).
 - **Root cause**: Claude Code dispatches `settings.json` hooks through cmd.exe, whose environment may not include the same PATH entries as Git Bash. Bare `node` / `python` / `python3` / `npx` / `npm` fail to resolve even though the binaries exist.
 - **Fix**: `fix-bare-commands` resolves the interpreter via `command -v` + `cygpath -m`, then rewrites the hook command to a quoted absolute path (e.g. `"C:/Program Files/nodejs/node.exe" <args>`). Integrated into `patch-all` pipeline; `verify` reports unresolved entries in dry-run mode.
 - **Issue type**: `bare_command`

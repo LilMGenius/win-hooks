@@ -32,7 +32,7 @@ bash "<PLUGIN_ROOT>/scripts/verify"
 ```
 
 This checks ALL installed plugins' hooks for:
-- **bom**: UTF-8 BOM in any file under hooks/ or _hooks/ (crashes JSON parser, breaks bash/shebang)
+- **bom**: UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json — e.g. wrappers in scripts/) (crashes JSON parser, breaks bash/shebang, breaks cmd.exe label parsing in polyglot wrappers)
 - **json_invalid**: Broken/unparseable JSON
 - **json_crlf**: CRLF line endings that can cause issues
 - **wrapper_missing**: Patched hook references a wrapper script that doesn't exist

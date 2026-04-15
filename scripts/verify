@@ -10,7 +10,8 @@
 #   plugin\tinstall_path\tissue_type\tdetail
 #
 # Issue types:
-#   bom               — UTF-8 BOM (EF BB BF) in any file under hooks/ or _hooks/
+#   bom               — UTF-8 BOM (EF BB BF) in any hook file (hooks/, _hooks/, or
+#                       any file referenced from hooks.json via ${CLAUDE_PLUGIN_ROOT}/...)
 #   json_invalid      — hooks.json is not valid JSON
 #   json_crlf         — hooks.json contains CRLF line endings
 #   wrapper_missing   — hooks.json references _hooks/ wrapper that doesn't exist
@@ -100,22 +101,36 @@ parse_plugins() {
 
 check_bom() {
   local plugin="$1" install_path="$2"
-  for dir in "${install_path}/hooks" "${install_path}/_hooks"; do
-    [[ ! -d "$dir" ]] && continue
-    for f in "$dir"/*; do
-      [[ ! -f "$f" ]] && continue
-      case "$f" in *.json.bak|*.tmp) continue ;; esac
-      local bom
-      bom=$(od -A n -t x1 -N 3 "$f" 2>/dev/null | tr -d ' \n')
-      if [[ "$bom" == "efbbbf" ]]; then
-        add_issue "$plugin" "$install_path" "bom" "$(basename "$f")"
-        if $FIX_MODE; then
-          tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
-          echo "  FIXED: stripped BOM from $(basename "$f")" >&2
-        fi
-      fi
+  local hooks_file="${install_path}/hooks/hooks.json"
+  local file_list f bom rel
+
+  # Build deduped file list: standard hook dirs + every file the hooks.json
+  # references via ${CLAUDE_PLUGIN_ROOT}/... (catches wrappers in nonstandard
+  # subdirs like scripts/, bin/, etc.).
+  file_list=$({
+    for dir in "${install_path}/hooks" "${install_path}/_hooks"; do
+      [[ -d "$dir" ]] || continue
+      find "$dir" -maxdepth 1 -type f 2>/dev/null
     done
-  done
+    if [[ -f "$hooks_file" ]]; then
+      grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' "$hooks_file" 2>/dev/null \
+        | sed "s|\${CLAUDE_PLUGIN_ROOT}|${install_path}|"
+    fi
+  } | sort -u)
+
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    [[ -f "$f" ]] || continue
+    case "$f" in *.json.bak|*.tmp) continue ;; esac
+    bom=$(od -A n -t x1 -N 3 "$f" 2>/dev/null | tr -d ' \n')
+    [[ "$bom" != "efbbbf" ]] && continue
+    rel="${f#$install_path/}"
+    add_issue "$plugin" "$install_path" "bom" "$rel"
+    if $FIX_MODE; then
+      tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+      echo "  FIXED: stripped BOM from $rel" >&2
+    fi
+  done <<< "$file_list"
 }
 
 check_crlf() {
