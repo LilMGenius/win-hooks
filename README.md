@@ -49,7 +49,7 @@ That's it. Next session, win-hooks silently patches every broken plugin before y
 Every time Claude Code starts, win-hooks runs a pipeline:
 
 ```
-scan plugins → patch hooks.json → fix settings.json paths → verify & auto-repair
+scan plugins → patch hooks.json → normalize settings.json hook commands → verify & auto-repair
 ```
 
 1. **Scans** `~/.claude/plugins/installed_plugins.json` for all installed plugins
@@ -130,6 +130,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
 | `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, script BOM, recursive wrappers |
 | `scripts/fix-backslash-paths` | Converts `C:\...` to `C:/...` in settings.json hooks |
+| `scripts/fix-bare-commands` | Rewrites bare `node`/`python`/`python3`/`npx`/`npm` in settings.json hooks to quoted absolute paths |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
 | `commands/status.md` | `/win-hooks:status` command definition |
 | `skills/diagnose/` | Diagnostic skill for hook errors |

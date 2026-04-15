@@ -1,0 +1,140 @@
+#!/bin/bash
+# win-hooks: fix-bare-commands
+# Rewrites bare interpreter commands (node, python, python3, npx, npm) in
+# ~/.claude/settings.json hook commands to quoted absolute paths.
+#
+# Fixes errors like "지정된 경로를 찾을 수 없습니다" / "The system cannot find
+# the path specified" that occur when Claude Code launches a hook via cmd.exe
+# and cmd's PATH doesn't contain the bare interpreter — even though bash does.
+#
+# Requires: node (guaranteed by Claude Code), cygpath (Git Bash built-in)
+#
+# Usage: fix-bare-commands [--dry-run]
+#   --dry-run: show what would change without modifying files
+#
+# Output: tab-separated lines to stdout:
+#   location\told_command\tnew_command
+#
+# Exit code: 0 = success or nothing to fix, 1 = error
+
+set -uo pipefail
+
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+
+SETTINGS="${HOME}/.claude/settings.json"
+[[ ! -f "$SETTINGS" ]] && exit 0
+
+if ! command -v node &>/dev/null; then
+  echo "win-hooks: node not found, cannot fix bare commands" >&2
+  exit 1
+fi
+
+# Resolve a bare command to a Windows-compatible absolute path.
+# Echoes empty string if not resolvable or target file doesn't exist.
+resolve_cmd() {
+  local name="$1"
+  local p
+  p=$(command -v "$name" 2>/dev/null) || return 0
+  # Must be a real path (not a shell builtin/alias).
+  [[ -z "$p" || "$p" != /* ]] && return 0
+  # Convert /c/Foo/bar to C:/Foo/bar; cygpath -m also auto-appends .exe when appropriate.
+  if command -v cygpath &>/dev/null; then
+    p=$(cygpath -m "$p" 2>/dev/null) || return 0
+  fi
+  # Defensive: ensure resolved file actually exists.
+  if [[ ! -f "$p" ]]; then
+    if [[ -f "${p}.exe" ]]; then
+      p="${p}.exe"
+    else
+      return 0
+    fi
+  fi
+  printf '%s' "$p"
+}
+
+NODE_PATH_RESOLVED=$(resolve_cmd node)
+PYTHON_PATH_RESOLVED=$(resolve_cmd python)
+PYTHON3_PATH_RESOLVED=$(resolve_cmd python3)
+[[ -z "$PYTHON3_PATH_RESOLVED" ]] && PYTHON3_PATH_RESOLVED="$PYTHON_PATH_RESOLVED"
+NPX_PATH_RESOLVED=$(resolve_cmd npx)
+NPM_PATH_RESOLVED=$(resolve_cmd npm)
+
+export WH_NODE="$NODE_PATH_RESOLVED"
+export WH_PYTHON="$PYTHON_PATH_RESOLVED"
+export WH_PYTHON3="$PYTHON3_PATH_RESOLVED"
+export WH_NPX="$NPX_PATH_RESOLVED"
+export WH_NPM="$NPM_PATH_RESOLVED"
+export WH_DRY_RUN="$DRY_RUN"
+
+node - "$SETTINGS" << 'JSEOF'
+const fs = require('fs');
+const settingsPath = process.argv[2];
+const dryRun = process.env.WH_DRY_RUN === 'true';
+
+const resolvers = {
+  node:    process.env.WH_NODE    || '',
+  python:  process.env.WH_PYTHON  || '',
+  python3: process.env.WH_PYTHON3 || '',
+  npx:     process.env.WH_NPX     || '',
+  npm:     process.env.WH_NPM     || '',
+};
+
+const raw = fs.readFileSync(settingsPath, 'utf8').replace(/^\uFEFF/, '');
+let data;
+try {
+  data = JSON.parse(raw);
+} catch (e) {
+  process.stderr.write('win-hooks: settings.json parse error: ' + e.message + '\n');
+  process.exit(1);
+}
+
+if (!data.hooks) process.exit(0);
+
+const changes = [];
+// Match a leading bare interpreter followed by whitespace or end-of-string.
+// Interpreters with paths (./node, /usr/bin/node, C:/.../node.exe) won't match.
+const BARE_RE = /^(node|python3|python|npx|npm)(\s|$)/;
+
+function walk(obj, loc) {
+  if (Array.isArray(obj)) {
+    obj.forEach((item, i) => walk(item, loc + '[' + i + ']'));
+  } else if (obj && typeof obj === 'object') {
+    if (typeof obj.command === 'string') {
+      const m = obj.command.match(BARE_RE);
+      if (m) {
+        const name = m[1];
+        const abs = resolvers[name];
+        if (abs) {
+          const rest = obj.command.slice(name.length);
+          const fixed = '"' + abs + '"' + rest;
+          changes.push({ loc, old: obj.command, fixed });
+          if (!dryRun) obj.command = fixed;
+        }
+      }
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      walk(v, loc + '.' + k);
+    }
+  }
+}
+
+walk(data.hooks, 'hooks');
+
+if (changes.length === 0) process.exit(0);
+
+for (const c of changes) {
+  console.log(c.loc + '\t' + c.old + '\t' + c.fixed);
+}
+
+if (!dryRun) {
+  const bakPath = settingsPath + '.winhooks.bak';
+  if (!fs.existsSync(bakPath)) {
+    fs.copyFileSync(settingsPath, bakPath);
+  }
+  fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2) + '\n');
+  process.stderr.write('win-hooks: fixed ' + changes.length + ' bare command(s) in settings.json\n');
+} else {
+  process.stderr.write('win-hooks: would fix ' + changes.length + ' bare command(s) (dry-run)\n');
+}
+JSEOF

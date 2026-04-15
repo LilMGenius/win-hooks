@@ -115,6 +115,12 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Fix**: `fix-backslash-paths` converts `C:\...` to `C:/...`. Integrated into `patch-all` pipeline.
 - **Issue type**: `backslash_path`
 
+### CASE-23: Bare interpreter commands in settings.json hooks
+- **Symptom**: Stop/SessionStart/etc. hook errors like `지정된 경로를 찾을 수 없습니다` / `The system cannot find the path specified` (CP949-garbled as `<<��(��) ������� �ʾҽ��ϴ�`). Hook command is `node <script>` or `python <script>`; the bare name is on Git Bash's PATH but not resolvable by cmd.exe at hook launch time.
+- **Root cause**: Claude Code dispatches `settings.json` hooks through cmd.exe, whose environment may not include the same PATH entries as Git Bash. Bare `node` / `python` / `python3` / `npx` / `npm` fail to resolve even though the binaries exist.
+- **Fix**: `fix-bare-commands` resolves the interpreter via `command -v` + `cygpath -m`, then rewrites the hook command to a quoted absolute path (e.g. `"C:/Program Files/nodejs/node.exe" <args>`). Integrated into `patch-all` pipeline; `verify` reports unresolved entries in dry-run mode.
+- **Issue type**: `bare_command`
+
 ---
 
 ## Runtime & Wrappers

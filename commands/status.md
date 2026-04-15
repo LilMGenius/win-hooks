@@ -39,6 +39,7 @@ This checks ALL installed plugins' hooks for:
 - **cmd_missing**: Missing run-hook.cmd in _hooks/ directory
 - **recursive_wrapper**: Bash wrapper (.py/.js) calls python3/node on itself
 - **backslash_path**: settings.json hook commands contain Windows backslash paths
+- **bare_command**: settings.json hook commands start with a bare interpreter (node/python/python3/npx/npm) that cmd.exe can't resolve at hook launch
 
 ### Step 3: Run the incompatibility scanner
 

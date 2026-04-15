@@ -58,6 +58,13 @@ if [[ -f "${SCRIPTS_DIR}/fix-backslash-paths" ]]; then
   bash "${SCRIPTS_DIR}/fix-backslash-paths" 2>&1 | grep -v "^hooks\." || true
 fi
 
+# ── Fix bare interpreter commands in settings.json ──────────────────
+# Rewrite `node/python/python3/npx/npm <args>` to quoted absolute paths
+# so hooks don't fail when cmd.exe's PATH lacks the interpreter at runtime.
+if [[ -f "${SCRIPTS_DIR}/fix-bare-commands" ]]; then
+  bash "${SCRIPTS_DIR}/fix-bare-commands" 2>&1 | grep -v "^hooks\." || true
+fi
+
 # ── Post-patch verification ─────────────────────────────────────────
 # Run verify --fix to detect and auto-repair any remaining issues
 # (BOM, CRLF, broken JSON, missing wrappers)

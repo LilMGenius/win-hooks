@@ -17,6 +17,7 @@
 #   cmd_missing       — _hooks/run-hook.cmd is missing but hooks.json references it
 #   recursive_wrapper — bash wrapper (.py/.js) calls python3/node on itself
 #   backslash_path    — settings.json hook command contains Windows backslash paths
+#   bare_command      — settings.json hook command uses bare interpreter not resolvable by cmd.exe
 #
 # Exit code: number of issues found (0 = healthy, capped at 125)
 #
@@ -199,7 +200,7 @@ while IFS=$'\t' read -r plugin install_path; do
   fi
 done < <(parse_plugins)
 
-# ── Check settings.json for backslash paths ───────────────────────
+# ── Check settings.json for backslash paths and bare commands ─────
 
 SETTINGS="${HOME}/.claude/settings.json"
 if [[ -f "$SETTINGS" ]] && command -v node &>/dev/null; then
@@ -207,6 +208,11 @@ if [[ -f "$SETTINGS" ]] && command -v node &>/dev/null; then
   if [[ -f "${SCRIPT_DIR}/fix-backslash-paths" ]]; then
     bash "${SCRIPT_DIR}/fix-backslash-paths" --dry-run 2>/dev/null | while IFS=$'\t' read -r location old_cmd new_cmd; do
       add_issue "settings.json" "$SETTINGS" "backslash_path" "${location}: ${old_cmd}"
+    done
+  fi
+  if [[ -f "${SCRIPT_DIR}/fix-bare-commands" ]]; then
+    bash "${SCRIPT_DIR}/fix-bare-commands" --dry-run 2>/dev/null | while IFS=$'\t' read -r location old_cmd new_cmd; do
+      add_issue "settings.json" "$SETTINGS" "bare_command" "${location}: ${old_cmd}"
     done
   fi
 fi

@@ -43,6 +43,10 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 **Root cause**: Windows backslash paths in `settings.json` hook commands get mangled during execution — backslashes are interpreted as escape characters, producing paths like `Userssmsme.configaincreport-usage.js`.
 **Fix**: Run `/win-hooks:fix` which converts `C:\...` to `C:/...` in settings.json hooks via `fix-backslash-paths`.
 
+### "지정된 경로를 찾을 수 없습니다" / "The system cannot find the path specified" on Stop/SessionStart hooks
+**Root cause**: `settings.json` hook command starts with a bare interpreter (`node`, `python`, `python3`, `npx`, `npm`) that's on Git Bash's PATH but not resolvable by cmd.exe at hook launch. Error text may appear CP949-garbled (e.g. `<<��(��) ������� �ʾҽ��ϴ�`).
+**Fix**: Run `/win-hooks:fix` — `fix-bare-commands` rewrites the command to a quoted absolute path like `"C:/Program Files/nodejs/node.exe" <script>`.
+
 ## Why Hooks Break on Windows
 
 Most Claude Code plugins are developed on Unix. Their hooks use:
@@ -89,6 +93,7 @@ This detects:
 | cmd_missing | _hooks/run-hook.cmd is missing |
 | recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |
 | backslash_path | settings.json hook command has Windows backslash paths |
+| bare_command | settings.json hook command uses bare interpreter not resolvable by cmd.exe |
 
 ### Step 4: Run incompatibility scanner
 
