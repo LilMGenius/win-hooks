@@ -19,6 +19,20 @@ if [[ ! -f "$TEMPLATE_CMD" ]]; then
   exit 1
 fi
 
+# Extract the script path token from a hook command.
+# For interpreter-prefixed commands (e.g. `bash ${CLAUDE_PLUGIN_ROOT}/x.sh`)
+# the path is NOT $1 (which is the interpreter) — pick the token containing
+# ${CLAUDE_PLUGIN_ROOT}; otherwise fall back to the first token.
+extract_path_part() {
+  local cmd="$1" p
+  p=$(printf '%s' "$cmd" | grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' | head -1)
+  if [[ -n "$p" ]]; then
+    printf '%s' "$p"
+  else
+    printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\"
+  fi
+}
+
 # Extract a meaningful wrapper name from a hook command.
 # Returns an extensionless name to avoid colliding with original plugin files.
 get_wrapper_name() {
@@ -32,7 +46,7 @@ get_wrapper_name() {
 
   # "${CLAUDE_PLUGIN_ROOT}/scripts/check_version.sh" -> "check-version"
   local path_part
-  path_part=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+  path_part=$(extract_path_part "$cmd")
   if [[ "$path_part" == */* ]]; then
     local base
     base=$(basename "$path_part")
@@ -52,7 +66,7 @@ get_wrapper_name() {
 generate_wrapper() {
   local cmd="$1"
   local path_part
-  path_part=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+  path_part=$(extract_path_part "$cmd")
 
   # .sh script via CLAUDE_PLUGIN_ROOT
   if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* && "$cmd" == *".sh"* ]]; then
@@ -60,6 +74,30 @@ generate_wrapper() {
     rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
     printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel_path"
     return
+  fi
+
+  # Interpreter-prefixed Python script via CLAUDE_PLUGIN_ROOT
+  # (e.g. `python3 ${CLAUDE_PLUGIN_ROOT}/hooks/x.py`). Always wrapped on Windows:
+  # exec the real Python resolved at patch time (PY_RESOLVED, found by a
+  # functional probe — see resolve_python) so the hook works even when `python3`
+  # is only the Microsoft Store stub. Resolving once at patch time (not per
+  # invocation) keeps hot hooks like PreToolUse from paying a second Python
+  # startup. Graceful no-op if no working Python exists. Copying python.exe ->
+  # python3.exe (CASE-09) can't be relied on — system installs like
+  # C:\ProgramData aren't writable without admin — so the wrapper is the fix.
+  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
+    local interp
+    interp=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+    if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
+      local rel_path
+      rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
+      if [[ -n "$PY_RESOLVED" ]]; then
+        printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$PY_RESOLVED" "$rel_path"
+      else
+        printf '#!/bin/bash\n# win-hooks: no working Python found at patch time — graceful no-op\nexit 0\n'
+      fi
+      return
+    fi
   fi
 
   # Non-.sh path via CLAUDE_PLUGIN_ROOT
@@ -163,6 +201,26 @@ patch_hooks_json() {
   fi
 }
 
+# Resolve a working Python to an absolute path, once per run. Uses a functional
+# probe (`-c ""`) rather than a path heuristic, so it correctly skips a dead
+# Microsoft Store App Execution Alias stub while accepting a real Store / conda /
+# python.org interpreter regardless of where it lives. Empty if none works.
+resolve_python() {
+  local _py _p
+  for _py in python3 python py; do
+    command -v "$_py" >/dev/null 2>&1 || continue
+    "$_py" -c "" >/dev/null 2>&1 || continue
+    _p=$(command -v "$_py")
+    if command -v cygpath >/dev/null 2>&1; then
+      _p=$(cygpath -m "$_p" 2>/dev/null || printf '%s' "$_p")
+    fi
+    [[ -f "$_p" ]] || { [[ -f "${_p}.exe" ]] && _p="${_p}.exe"; }
+    printf '%s' "$_p"
+    return 0
+  done
+}
+PY_RESOLVED=$(resolve_python || true)
+
 # Track which hooks files have been set up
 declare -A SETUP_DONE
 declare -A PATCHED_PLUGINS
@@ -204,9 +262,14 @@ while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
   # Build new command (JSON-escaped form for text replacement)
   new_cmd='\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" '"${wrapper_name}"
 
-  # For CLAUDE_PLUGIN_ROOT paths, preserve original arguments
+  # For CLAUDE_PLUGIN_ROOT paths, preserve genuine trailing arguments.
+  # Strip everything up to AND INCLUDING the script path token (which the
+  # wrapper body already encodes), so an interpreter prefix or the path
+  # itself is never re-appended as a bogus arg.
   if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
-    extra_args=$(printf '%s' "$cmd" | awk '{$1=""; sub(/^ +/, ""); print}')
+    extra_args=$(printf '%s' "$cmd" \
+      | sed -E 's#.*\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+##' \
+      | sed -E 's/^[\"[:space:]]+//; s/[[:space:]]+$//')
     [[ -n "$extra_args" ]] && new_cmd="${new_cmd} ${extra_args}"
   fi
 

@@ -36,8 +36,10 @@ This checks ALL installed plugins' hooks for:
 - **json_invalid**: Broken/unparseable JSON
 - **json_crlf**: CRLF line endings that can cause issues
 - **wrapper_missing**: Patched hook references a wrapper script that doesn't exist
+- **wrapper_broken**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target (symptom: `bash: .../bash: No such file or directory`)
 - **cmd_missing**: Missing run-hook.cmd in _hooks/ directory
 - **recursive_wrapper**: Bash wrapper (.py/.js) calls python3/node on itself
+- **python3_stub**: Hook uses bare python3/python that resolves to a Microsoft Store App Execution Alias stub (or is missing)
 - **backslash_path**: settings.json hook commands contain Windows backslash paths
 - **bare_command**: settings.json hook commands start with a bare interpreter (node/python/python3/npx/npm) that cmd.exe can't resolve at hook launch
 
@@ -64,7 +66,9 @@ Use these indicators:
 - **CRLF**: hooks.json has CRLF line endings — run `/win-hooks:fix` to repair
 - **BROKEN**: hooks.json is invalid JSON — check `.bak` for recovery
 - **MISSING WRAPPER**: Patched hook references a wrapper that doesn't exist
+- **BROKEN WRAPPER**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target — run `/win-hooks:fix` to repair
 - **RECURSIVE**: Bash wrapper calls interpreter on itself — run `/win-hooks:fix` to disable
+- **PYTHON STUB**: Bare python3/python resolves to a Microsoft Store stub — run `/win-hooks:fix` to wrap with runtime resolution
 
 To check for patched plugins:
 ```bash

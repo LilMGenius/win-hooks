@@ -114,7 +114,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 - **Windows 10/11** with [Git for Windows](https://gitforwindows.org/)
 - **Claude Code** CLI (includes Node.js, used for JSON validation)
 
-> **Bonus**: win-hooks auto-creates a `python3` alias if only `python.exe` exists — so other plugins that call `python3` won't break either.
+> **Bonus**: win-hooks keeps `python3` hooks working too — it wraps bare `python3` commands and bakes in the absolute path of a real interpreter found by a functional probe at patch time (even when `python3` is only the Microsoft Store "Python was not found" stub, and without mistaking a real Store-installed Python for it), plus a best-effort `python.exe` → `python3.exe` copy when the Python dir is writable.
 
 ## Components
 
@@ -128,7 +128,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
 | `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
-| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, script BOM, recursive wrappers |
+| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, broken wrappers, recursive wrappers, python3 stub |
 | `scripts/fix-backslash-paths` | Converts `C:\...` to `C:/...` in settings.json hooks |
 | `scripts/fix-bare-commands` | Rewrites bare `node`/`python`/`python3`/`npx`/`npm` in settings.json hooks to quoted absolute paths |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
@@ -144,7 +144,8 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 |---------|---------|--------|
 | `.cmd` in command | COMPATIBLE | Already Windows-native |
 | `.sh` in command | INCOMPATIBLE | Needs bash wrapper |
-| `python3` / `node` prefix | COMPATIBLE | Interpreter handles it |
+| `node` prefix | COMPATIBLE | Interpreter handles it |
+| `python3`/`python` prefix (`${CLAUDE_PLUGIN_ROOT}`) | INCOMPATIBLE | Always wrapped on Windows; execs the abs path of a real Python found by a functional probe at patch time (handles the Microsoft Store "Python was not found" stub) |
 | `.py` in command | COMPATIBLE | Python file association works |
 | Bare command not in PATH | INCOMPATIBLE | Missing binary |
 

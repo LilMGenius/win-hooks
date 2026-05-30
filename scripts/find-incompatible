@@ -27,7 +27,13 @@ is_incompatible() {
     local first_word
     first_word=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
     case "$first_word" in
-      python3|python|node|npx|npm) return 1 ;;
+      # python3/python prefix: ALWAYS wrap on Windows. The bare interpreter may
+      # be a dead Microsoft Store stub, and even when it works in Git Bash the
+      # cmd.exe that dispatches the hook may resolve a different (stub) python.
+      # Routing through the bash wrapper, which execs a python resolved by a
+      # functional probe at patch time, normalizes this across all machines.
+      python3|python) return 0 ;;
+      node|npx|npm) return 1 ;;
     esac
     [[ "$cmd" == *".py"* ]] && return 1
     return 0

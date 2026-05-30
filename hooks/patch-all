@@ -29,13 +29,25 @@ if [[ ! -f "$TEMPLATE_CMD" ]]; then
   exit 1
 fi
 
-# ── Ensure python3 exists ───────────────────────────────────────────
-# Most plugins call python3, but Windows only has python.exe.
-# Copy python.exe -> python3.exe so those hooks don't fail.
-if ! command -v python3 &>/dev/null && command -v python &>/dev/null; then
-  python_exe="$(command -v python)"
-  python_dir="$(dirname "$python_exe")"
-  cp "$python_exe" "${python_dir}/python3" 2>/dev/null || true
+# ── Best-effort: make `python3` resolve globally ────────────────────
+# Primary handling for `python3 ${CLAUDE_PLUGIN_ROOT}/x.py` hooks is the
+# wrapper apply-patches generates (resolves a real Python at patch time).
+# This copy is a secondary nicety for bare `python3` that slips past the
+# scanner: when `python3` can't actually run (missing or a dead Microsoft
+# Store stub) but a real `python` can, copy it to python3.exe alongside.
+# Detection is a functional probe (`-c ""`), not a path heuristic, so a
+# legitimately Store-installed Python is not mistaken for the dead stub.
+# Best-effort only: a system Python dir (C:\ProgramData, C:\Program Files)
+# isn't writable without admin, so the copy may fail — the wrapper covers it.
+if ! { command -v python3 >/dev/null 2>&1 && python3 -c "" >/dev/null 2>&1; } \
+   && command -v python >/dev/null 2>&1 && python -c "" >/dev/null 2>&1; then
+  python_src="$(command -v python)"
+  [[ ! -f "$python_src" && -f "${python_src}.exe" ]] && python_src="${python_src}.exe"
+  python_dir="$(dirname "$python_src")"
+  if [[ -f "$python_src" ]]; then
+    [[ ! -f "${python_dir}/python3.exe" ]] && cp "$python_src" "${python_dir}/python3.exe" 2>/dev/null || true
+    [[ ! -f "${python_dir}/python3" ]] && cp "$python_src" "${python_dir}/python3" 2>/dev/null || true
+  fi
 fi
 
 # ── Run pipeline: find-incompatible | apply-patches ─────────────────

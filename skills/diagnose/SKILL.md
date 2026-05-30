@@ -47,6 +47,14 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 **Root cause**: `settings.json` hook command starts with a bare interpreter (`node`, `python`, `python3`, `npx`, `npm`) that's on Git Bash's PATH but not resolvable by cmd.exe at hook launch. Error text may appear CP949-garbled (e.g. `'node'��(��) ���� �Ǵ� �ܺ� ����...`). **Note**: the similar-looking `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ������� �ʾҽ��ϴ�`) is a *different* error — that one is BOM-corrupted polyglot wrapper (see the BOM section above).
 **Fix**: Run `/win-hooks:fix` — `fix-bare-commands` rewrites the command to a quoted absolute path like `"C:/Program Files/nodejs/node.exe" <script>`.
 
+### "bash: /c/Users/.../<plugin>/<version>/bash: No such file or directory" on any hook event
+**Root cause**: A win-hooks-generated wrapper execs a bogus target. When the original hook command was interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks/x.sh`), an older `apply-patches` took the interpreter (`bash`) as the script path, so the wrapper became `exec bash "$PLUGIN_ROOT/bash"` — a nonexistent file. The missing-file name is the interpreter (`bash`, `sh`, etc.). Seen on learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse). It hid from `verify` because the hook already pointed at `run-hook.cmd` and only wrapper *existence* was checked.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position.
+
+### "Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases."
+**Root cause**: A hook invokes bare `python3` (e.g. hookify on UserPromptSubmit/PreToolUse/PostToolUse/Stop), but `python3` resolves to the Microsoft Store **App Execution Alias stub** — a `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` reparse point that satisfies `command -v`/`where` yet only prints this message. A real `python.exe` is often present but can't simply be copied to `python3.exe` because system Python dirs (`C:\ProgramData\...`, `C:\Program Files\...`) aren't writable without admin.
+**Fix**: Run `/win-hooks:fix` — `find-incompatible` always flags bare `python3`/`python` `${CLAUDE_PLUGIN_ROOT}` hooks on Windows, and `apply-patches` wraps them, baking in the absolute path of a real Python found by a functional probe at patch time (`python3`/`python`/`py`, first one where `python -c ""` succeeds). The probe is location-independent, so a legitimately Microsoft-Store-installed Python is used rather than mistaken for the dead stub; if no Python works at all, the wrapper is a graceful no-op. A best-effort `python.exe → python3.exe` copy also runs when the Python dir is writable.
+
 ## Why Hooks Break on Windows
 
 Most Claude Code plugins are developed on Unix. Their hooks use:
@@ -90,8 +98,10 @@ This detects:
 | json_invalid | hooks.json is not valid JSON |
 | json_crlf | CRLF line endings in hooks.json |
 | wrapper_missing | Patched hook references nonexistent wrapper script |
+| wrapper_broken | Wrapper execs a bogus $PLUGIN_ROOT/<interpreter> target (bash: .../bash: No such file) |
 | cmd_missing | _hooks/run-hook.cmd is missing |
 | recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |
+| python3_stub | Hook uses bare python3/python that resolves to a Microsoft Store stub (or is missing) |
 | backslash_path | settings.json hook command has Windows backslash paths |
 | bare_command | settings.json hook command uses bare interpreter not resolvable by cmd.exe |
 
@@ -169,9 +179,9 @@ cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
 - Verify the wrapper script has correct content: `cat <plugin>/_hooks/<wrapper-name>`
 - Run with debug: `claude --debug hooks` to see hook execution details
 
-**python3 not found (other plugins):**
-- win-hooks automatically copies `python.exe` → `python3.exe` if `python3` is missing
-- If Python is not installed at all, plugins that require Python will still fail
+**python3 not found / "Python was not found" Microsoft Store stub:**
+- win-hooks wraps bare `python3` hook commands so a real (non-WindowsApps) python is resolved at runtime, and best-effort copies `python.exe` → `python3.exe` when the Python dir is writable
+- If no real Python is installed at all (only the Microsoft Store stub), plugins that require Python will still fail — install Python from python.org and restart
 
 **Plugin update overwrites fix:**
 - This is expected. Restart Claude Code and win-hooks will re-patch automatically.
