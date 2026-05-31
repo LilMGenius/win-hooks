@@ -35,7 +35,7 @@ This checks ALL installed plugins' hooks for:
 - **bom**: UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json — e.g. wrappers in scripts/) (crashes JSON parser, breaks bash/shebang, breaks cmd.exe label parsing in polyglot wrappers)
 - **json_invalid**: Broken/unparseable JSON
 - **json_crlf**: CRLF line endings that can cause issues
-- **wrapper_missing**: Patched hook references a wrapper script that doesn't exist
+- **wrapper_missing**: Patched hook references a wrapper script that doesn't exist (`/win-hooks:fix` recreates it)
 - **wrapper_broken**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target (symptom: `bash: .../bash: No such file or directory`)
 - **cmd_missing**: Missing run-hook.cmd in _hooks/ directory
 - **recursive_wrapper**: Bash wrapper (.py/.js) calls python3/node on itself
@@ -65,7 +65,7 @@ Use these indicators:
 - **BOM**: File has UTF-8 BOM — run `/win-hooks:fix` to repair
 - **CRLF**: hooks.json has CRLF line endings — run `/win-hooks:fix` to repair
 - **BROKEN**: hooks.json is invalid JSON — check `.bak` for recovery
-- **MISSING WRAPPER**: Patched hook references a wrapper that doesn't exist
+- **MISSING WRAPPER**: Patched hook references a wrapper that doesn't exist — run `/win-hooks:fix` to recreate
 - **BROKEN WRAPPER**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target — run `/win-hooks:fix` to repair
 - **RECURSIVE**: Bash wrapper calls interpreter on itself — run `/win-hooks:fix` to disable
 - **PYTHON STUB**: Bare python3/python resolves to a Microsoft Store stub — run `/win-hooks:fix` to wrap with runtime resolution

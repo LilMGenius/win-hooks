@@ -14,7 +14,10 @@
 #                       any file referenced from hooks.json via ${CLAUDE_PLUGIN_ROOT}/...)
 #   json_invalid      — hooks.json is not valid JSON
 #   json_crlf         — hooks.json contains CRLF line endings
-#   wrapper_missing   — hooks.json references _hooks/ wrapper that doesn't exist
+#   wrapper_missing   — hooks.json references a _hooks/ wrapper that doesn't exist
+#                       (--fix recreates it: passthrough `exec bash "$@"` when the
+#                       patched command forwards the real target, else regenerated
+#                       from hooks.json.bak — bash path-bake or probed-python bake)
 #   wrapper_broken    — _hooks/ wrapper execs a bogus ${PLUGIN_ROOT}/<interpreter>
 #                       target (path extraction grabbed the interpreter, not the
 #                       script); fails with bash: .../bash: No such file or directory
@@ -28,7 +31,7 @@
 # Exit code: number of issues found (0 = healthy, capped at 125)
 #
 # Usage: verify [--fix]
-#   --fix: auto-repair BOM/CRLF, broken wrappers, and recursive wrappers in-place
+#   --fix: auto-repair BOM/CRLF, broken/missing wrappers, and recursive wrappers in-place
 
 set -uo pipefail
 
@@ -161,21 +164,100 @@ check_json_valid() {
   return 0
 }
 
+# Resolve a working Python to an absolute path via a functional probe (`-c ""`),
+# not a path heuristic — accepts a real Store/conda/python.org interpreter and
+# rejects a dead Microsoft Store alias stub. Empty if none works.
+resolve_python() {
+  local _py _p
+  for _py in python3 python py; do
+    command -v "$_py" >/dev/null 2>&1 || continue
+    "$_py" -c "" >/dev/null 2>&1 || continue
+    _p=$(command -v "$_py")
+    command -v cygpath >/dev/null 2>&1 && _p=$(cygpath -m "$_p" 2>/dev/null || printf '%s' "$_p")
+    [[ -f "$_p" ]] || { [[ -f "${_p}.exe" ]] && _p="${_p}.exe"; }
+    printf '%s' "$_p"; return 0
+  done
+}
+
+# Recreate a wrapper that hooks.json references but that is missing from _hooks/.
+# Two cases:
+#   1. The patched command forwards the real ${CLAUDE_PLUGIN_ROOT}/... target as a
+#      trailing arg (older patch form). run-hook.cmd passes it through as "$@", so
+#      the correct body is `exec bash "$@"`.
+#   2. The path is baked into the wrapper body (current patch form, no trailing
+#      target). Recover the original command from hooks.json.bak by matching the
+#      generated wrapper name, then regenerate the body — probed-python bake for
+#      python/python3 hooks, else a bash/direct path bake (mirrors apply-patches).
+recreate_missing_wrapper() {
+  local install_path="$1" hooks_file="$2" wrapper="$3" rest="$4"
+  local target="${install_path}/_hooks/${wrapper}"
+
+  # Case 1: real target forwarded as an argument.
+  if printf '%s' "$rest" | grep -q 'CLAUDE_PLUGIN_ROOT'; then
+    printf '#!/bin/bash\n# win-hooks: recreated — exec the real target passed by run-hook.cmd\nexec bash "$@"\n' > "$target"
+    echo "  FIXED: recreated missing wrapper _hooks/${wrapper} (passthrough)" >&2
+    return 0
+  fi
+
+  # Case 2: path baked in body — recover original command from .bak.
+  local bak="${hooks_file}.bak" rawcmd="" relpath interp py b p l
+  if [[ ! -f "$bak" ]]; then
+    echo "  WARN: cannot recreate _hooks/${wrapper} — no hooks.json.bak" >&2
+    return 1
+  fi
+  while IFS= read -r l; do
+    p=$(printf '%s' "$l" | grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' | head -1)
+    [[ -z "$p" ]] && continue
+    b=$(basename "$p"); b="${b%.*}"; b="${b//_/-}"
+    if [[ "$b" == "$wrapper" ]]; then rawcmd="$l"; break; fi
+  done < <(grep -E '"command"' "$bak" 2>/dev/null)
+  if [[ -z "$rawcmd" ]]; then
+    echo "  WARN: cannot map _hooks/${wrapper} to a hooks.json.bak command" >&2
+    return 1
+  fi
+  relpath=$(printf '%s' "$rawcmd" | grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' | head -1 | sed 's|.*${CLAUDE_PLUGIN_ROOT}/||')
+  interp=$(printf '%s' "$rawcmd" | sed -E 's/.*"command"[[:space:]]*:[[:space:]]*"//' | awk '{print $1}' | tr -d '\\"')
+  if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
+    py=$(resolve_python)
+    if [[ -n "$py" ]]; then
+      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$relpath" > "$target"
+    else
+      printf '#!/bin/bash\n# win-hooks: no working Python found — graceful no-op\nexit 0\n' > "$target"
+    fi
+  elif [[ "$relpath" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$relpath" > "$target"
+  else
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$relpath" > "$target"
+  fi
+  echo "  FIXED: recreated missing wrapper _hooks/${wrapper} (regenerated from .bak)" >&2
+}
+
 check_wrappers() {
   local plugin="$1" install_path="$2" hooks_file="$3"
-  # Extract _hooks/ references using grep (no JSON parser needed)
-  grep -o '_hooks/run-hook\.cmd[^"]*' "$hooks_file" 2>/dev/null | while IFS= read -r ref; do
-    # ref: _hooks/run-hook.cmd\" wrapper-name  or  _hooks/run-hook.cmd\\" wrapper-name
-    local wrapper
-    wrapper=$(printf '%s' "$ref" | sed 's|_hooks/run-hook\.cmd[\\\"]*[[:space:]]*||' | awk '{print $1}')
+  local hooks_dir="${install_path}/_hooks"
+  # Each patched command looks like:
+  #   "\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" <wrapper> [<trailing target>]"
+  # The escaped \" right after run-hook.cmd defeated an [^"]* grab (it stopped at
+  # that quote, losing the wrapper name), so wrapper_missing never fired for the
+  # normal patched form. Parse per line: strip up to run-hook.cmd plus the escaped
+  # quote/space, then take the first token as the wrapper name.
+  # Require the _hooks/ segment so we only manage win-hooks-created wrappers — a
+  # plugin that ships its own polyglot at hooks/run-hook.cmd (e.g. superpowers)
+  # must NOT be flagged.
+  grep -E '_hooks/run-hook\.cmd' "$hooks_file" 2>/dev/null | while IFS= read -r line; do
+    local rest wrapper
+    rest=$(printf '%s' "$line" | sed -E 's/.*run-hook\.cmd//; s/^[\\"]*[[:space:]]*//')
+    wrapper=$(printf '%s' "$rest" | awk '{print $1}' | sed 's/[\\"].*//')
     [[ -z "$wrapper" ]] && continue
 
-    local hooks_dir="${install_path}/_hooks"
     if [[ ! -f "${hooks_dir}/run-hook.cmd" ]]; then
       add_issue "$plugin" "$install_path" "cmd_missing" "_hooks/run-hook.cmd not found"
     fi
     if [[ ! -f "${hooks_dir}/${wrapper}" ]]; then
       add_issue "$plugin" "$install_path" "wrapper_missing" "_hooks/${wrapper} not found"
+      if $FIX_MODE; then
+        recreate_missing_wrapper "$install_path" "$hooks_file" "$wrapper" "$rest"
+      fi
     fi
   done
 }

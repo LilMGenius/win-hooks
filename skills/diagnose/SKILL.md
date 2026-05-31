@@ -49,7 +49,7 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 
 ### "bash: /c/Users/.../<plugin>/<version>/bash: No such file or directory" on any hook event
 **Root cause**: A win-hooks-generated wrapper execs a bogus target. When the original hook command was interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks/x.sh`), an older `apply-patches` took the interpreter (`bash`) as the script path, so the wrapper became `exec bash "$PLUGIN_ROOT/bash"` — a nonexistent file. The missing-file name is the interpreter (`bash`, `sh`, etc.). Seen on learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse). It hid from `verify` because the hook already pointed at `run-hook.cmd` and only wrapper *existence* was checked.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position. If a referenced `_hooks/` wrapper is *entirely missing* (interrupted patch or deletion) rather than just mis-bodied, `verify --fix` recreates it — passthrough `exec bash "$@"` when run-hook.cmd forwards the target, else regenerated from `hooks.json.bak` (bash path-bake or probed-python bake). **Note**: this fixes the disk; a running session that cached the old wrapper config still needs a restart.
 
 ### "Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases."
 **Root cause**: A hook invokes bare `python3` (e.g. hookify on UserPromptSubmit/PreToolUse/PostToolUse/Stop), but `python3` resolves to the Microsoft Store **App Execution Alias stub** — a `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` reparse point that satisfies `command -v`/`where` yet only prints this message. A real `python.exe` is often present but can't simply be copied to `python3.exe` because system Python dirs (`C:\ProgramData\...`, `C:\Program Files\...`) aren't writable without admin.
@@ -97,7 +97,7 @@ This detects:
 | bom | UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json) |
 | json_invalid | hooks.json is not valid JSON |
 | json_crlf | CRLF line endings in hooks.json |
-| wrapper_missing | Patched hook references nonexistent wrapper script |
+| wrapper_missing | Patched hook references nonexistent wrapper script (`--fix` recreates it) |
 | wrapper_broken | Wrapper execs a bogus $PLUGIN_ROOT/<interpreter> target (bash: .../bash: No such file) |
 | cmd_missing | _hooks/run-hook.cmd is missing |
 | recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |

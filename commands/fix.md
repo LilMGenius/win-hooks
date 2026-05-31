@@ -39,7 +39,7 @@ This runs the full pipeline:
 2. `find-incompatible` scans all installed plugins for incompatible hooks (including bare `python3` that resolves only to a Microsoft Store stub)
 3. `apply-patches` creates wrappers, patches hooks.json (with BOM/CRLF sanitization + JSON validation); bare-`python3` hooks get a wrapper with the absolute path of a real python baked in (resolved by a functional probe at patch time)
 4. `fix-backslash-paths` + `fix-bare-commands` repair settings.json hook commands
-5. `verify --fix` auto-repairs encoding issues (BOM in JSON and scripts, CRLF), repairs broken wrappers (bogus `$PLUGIN_ROOT/<interpreter>` targets), and disables recursive wrappers
+5. `verify --fix` auto-repairs encoding issues (BOM in JSON and scripts, CRLF), repairs broken wrappers (bogus `$PLUGIN_ROOT/<interpreter>` targets), recreates missing wrappers (referenced by hooks.json but absent — passthrough or regenerated from `.bak`), and disables recursive wrappers
 
 ### Step 3: Show results
 

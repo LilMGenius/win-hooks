@@ -98,9 +98,11 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Fix**: `verify` performs post-patch health checks (JSON validity, BOM, CRLF, wrapper existence).
 
 ### CASE-16: Missing wrapper scripts
-- **Symptom**: `_hooks/run-hook.cmd` or wrapper script not found.
-- **Root cause**: Interrupted patching — hooks.json patched but wrapper not written.
-- **Fix**: `verify` detects; re-run `patch-all` to recreate.
+- **Symptom**: A patched hook references a `_hooks/` wrapper that doesn't exist — `bash: .../_hooks/<wrapper>: No such file or directory` on the hooked event. Causes: interrupted patching (hooks.json patched but wrapper not written) or external deletion.
+- **Root cause**: Two gaps made this neither detected nor repaired. (1) `check_wrappers` extracted the name with `grep -o '_hooks/run-hook.cmd[^"]*'`, which stopped at the escaped `\"` immediately after `run-hook.cmd` and lost the wrapper name — so `wrapper_missing` never fired for the normal patched command form (false "healthy"). (2) `find-incompatible` skips already-`.cmd`-patched hooks, so `patch-all` could not recreate the wrapper — the old "re-run patch-all" remedy never actually fired.
+- **Fix**: `verify` now parses each command line correctly (strip up to `run-hook.cmd` + the escaped quote, take the first token), scoped to the `_hooks/` segment so a plugin that ships its own `hooks/run-hook.cmd` (e.g. superpowers) is not falsely flagged. `verify --fix` **recreates** the missing wrapper: `exec bash "$@"` when the patched command forwards the real `${CLAUDE_PLUGIN_ROOT}/...` target as a trailing arg (CASE-24 family); otherwise it recovers the original command from `hooks.json.bak` (matching the generated wrapper name) and regenerates the body — probed-python bake for `python3`/`python` hooks (CASE-09), else a bash/direct path bake. Graceful skip if neither a forwarded target nor a `.bak` is available.
+- **Note**: This heals the *disk*. A session that cached an old wrapper name at SessionStart and then had that file removed mid-session still errors until restart (CASE-13 model: re-patch at SessionStart → effective next session); `verify` is a disk-truth tool and cannot rewrite a running session's cached hook config.
+- **Issue type**: `wrapper_missing`
 
 ### CASE-17: Silent error suppression hides failures
 - **Symptom**: No error output, but hooks don't work.

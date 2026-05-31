@@ -56,7 +56,7 @@ scan plugins → patch hooks.json → normalize settings.json hook commands → 
 2. **Detects** `.sh` scripts, missing binaries, and Unix-only commands
 3. **Creates** a polyglot `.cmd` entry point and extensionless bash wrappers
 4. **Patches** each plugin's `hooks.json` (originals backed up as `.bak`)
-5. **Verifies** patched files — strips BOM from JSON and scripts, normalizes CRLF, validates JSON, disables recursive wrappers
+5. **Verifies** patched files — strips BOM from JSON and scripts, normalizes CRLF, validates JSON, repairs broken wrappers, recreates missing wrappers, disables recursive wrappers
 6. **Skips** anything already compatible — safe to run a thousand times
 
 ## How It Works
@@ -128,7 +128,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
 | `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |
-| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, broken wrappers, recursive wrappers, python3 stub |
+| `scripts/verify` | Health check — validates JSON, BOM, CRLF, wrapper integrity, broken/missing wrappers, recursive wrappers, python3 stub |
 | `scripts/fix-backslash-paths` | Converts `C:\...` to `C:/...` in settings.json hooks |
 | `scripts/fix-bare-commands` | Rewrites bare `node`/`python`/`python3`/`npx`/`npm` in settings.json hooks to quoted absolute paths |
 | `commands/fix.md` | `/win-hooks:fix` command definition |
