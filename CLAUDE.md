@@ -1,42 +1,28 @@
 # Win-Hooks
 
+## Work Principles
+
+**Automated self-healing, not one-off fixes.** When a Windows bug is reported, never fix it directly on the machine — pattern-match the error, add detection to the scanner / `verify`, and add automatic remediation to the `patch-all` pipeline.
+
+**One root cause = one issue type.** Extend the existing check/issue type for a variant instead of adding a new one; fold an overlapping new CASE into the existing one, and merge a single-CASE section into a neighbor. **CASE-NN are discovery-order stable IDs** — append a new issue at the next free number and **never renumber** (SKILL.md, status.md, and git reference them); section order is by priority, independent of the numbers.
+
+**Before committing, sync every surface:**
+
+1. **CLAUDE.md** — new edge case → add a CASE-XX entry.
+2. **README.md** — pipeline or components changed → update.
+3. **skills/diagnose/SKILL.md** — new symptom or issue type → update.
+4. **commands/status.md, fix.md** — issue type or script changed → update.
+5. **scripts/verify** — new issue type → add the check + a header line.
+6. **Cross-check** — the issue-type set must match across the verify header, SKILL.md table, and status.md list.
+7. **Version bump** — `plugin.json` + `marketplace.json`, then tag `v{x.y.z}`. New detection/fix capability = `feat:` (minor); repairing existing detection, docs, or refactors = patch.
+
+**Commit messages:** one bullet per line, no wrapping within a bullet; no co-author tags; no version-bump lines.
+
+---
+
 ## Known Edge Cases & Scenarios
 
-All discovered Windows compatibility issues that win-hooks detects, fixes, or documents.
-
----
-
-## Encoding & Line Endings
-
-### CASE-01: UTF-8 BOM in hook files
-- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (wrapper scripts) · `<<(을)를 지정된 경로를 찾지 못했습니다` / `<< was unexpected at this time` (CP949-garbled `<<��(��) ������� �ʾҽ��ϴ�`) when a polyglot `.cmd` wrapper has BOM — the BOM pushes `:` off line-start so cmd.exe stops treating it as a label, then parses `<<` (the heredoc opener meant for bash) as redirection.
-- **Root cause**: Windows editors / PowerShell `Out-File` insert UTF-8 BOM (`EF BB BF`). JSON parsers, bash builtins, shebang parsing, and cmd.exe label detection all choke on the invisible bytes.
-- **Fix**: `verify --fix` strips BOM from all files in `hooks/`, `_hooks/`, **and any file referenced from hooks.json via `${CLAUDE_PLUGIN_ROOT}/...`** (catches polyglot wrappers shipped in nonstandard subdirs like `scripts/`, e.g. ralph-loop). `apply-patches` also pre-sanitizes hooks.json before awk patching so BOM doesn't propagate (old CASE-04).
-- **Issue type**: `bom`
-
-### CASE-02: CRLF line endings in hooks.json
-- **Symptom**: Bash `read` includes `\r`, breaking string comparisons. Some JSON parsers choke on `\r\n`.
-- **Root cause**: `core.autocrlf=true` or editors saving with CRLF.
-- **Fix**: `apply-patches` normalizes CRLF→LF. `verify --fix` repairs.
-
-### CASE-03: CRLF in bash scripts breaks execution
-- **Symptom**: `bash: ./script: /bin/bash^M: bad interpreter`
-- **Root cause**: `core.autocrlf=true` converts LF→CRLF on checkout.
-- **Fix**: `.gitattributes` with `* text=auto eol=lf`.
-
----
-
-## JSON & Patching
-
-### CASE-05: Patched JSON validation failure
-- **Symptom**: After patching, hooks.json is invalid JSON.
-- **Root cause**: awk `index()` text replacement can produce invalid JSON on partial matches.
-- **Fix**: `validate_json()` checks after each patch; auto-restores from `.bak` on failure.
-
-### CASE-06: installed_plugins.json v2 format
-- **Symptom**: Scanner finds zero plugins; all checks pass vacuously.
-- **Root cause**: v2 wraps plugins under `{"version": 2, "plugins": {...}}`.
-- **Fix**: Both `verify` and `find-incompatible` parsers handle v1 and v2 via `": [` pattern matching.
+All discovered Windows compatibility issues that win-hooks detects, fixes, or documents. Ordered by diagnostic priority — user-facing symptom categories first, internal machinery next. **CASE-NN numbers are stable IDs in discovery order (referenced across SKILL.md / status.md / git), so they are intentionally not sequential here.**
 
 ---
 
@@ -67,26 +53,64 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 
 ---
 
-## Plugin Environment
+## Encoding & Line Endings
 
-### CASE-11: `$CLAUDE_PLUGIN_ROOT` not available in Bash tool
-- **Symptom**: `/win-hooks:fix` command fails — variable is empty.
-- **Fix**: Commands/skills parse `installed_plugins.json` with awk to find the install path dynamically.
+### CASE-01: UTF-8 BOM in hook files
+- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (wrapper scripts) · `<<(을)를 지정된 경로를 찾지 못했습니다` / `<< was unexpected at this time` (CP949-garbled `<<��(��) ������� �ʾҽ��ϴ�`) when a polyglot `.cmd` wrapper has BOM — the BOM pushes `:` off line-start so cmd.exe stops treating it as a label, then parses `<<` (the heredoc opener meant for bash) as redirection.
+- **Root cause**: Windows editors / PowerShell `Out-File` insert UTF-8 BOM (`EF BB BF`). JSON parsers, bash builtins, shebang parsing, and cmd.exe label detection all choke on the invisible bytes.
+- **Fix**: `verify --fix` strips BOM from all files in `hooks/`, `_hooks/`, **and any file referenced from hooks.json via `${CLAUDE_PLUGIN_ROOT}/...`** (catches polyglot wrappers shipped in nonstandard subdirs like `scripts/`, e.g. ralph-loop). `apply-patches` also pre-sanitizes hooks.json before awk patching so BOM doesn't propagate (old CASE-04).
+- **Issue type**: `bom`
 
-### CASE-12: Multiple cached plugin versions
-- **Symptom**: Patching one version doesn't fix the active one.
-- **Root cause**: Cache contains multiple version dirs; only the one in `installed_plugins.json` is active.
-- **Fix**: Scanner reads `installed_plugins.json` for active paths, not all cached versions.
+### CASE-02: CRLF line endings in hooks.json
+- **Symptom**: Bash `read` includes `\r`, breaking string comparisons. Some JSON parsers choke on `\r\n`.
+- **Root cause**: `core.autocrlf=true` or editors saving with CRLF.
+- **Fix**: `apply-patches` normalizes CRLF→LF. `verify --fix` repairs.
 
-### CASE-13: Plugin update overwrites patches
-- **Symptom**: After a plugin update its install path changes and the win-hooks patch is lost, so its hooks break again.
-- **Fix**: `patch-all` runs at every SessionStart and automatically re-patches the new path. By design.
-- **Mid-session caveat (updated for `/reload-plugins`)**: `patch-all` edits a plugin's `hooks.json` *during* SessionStart, but Claude Code already loaded that plugin's hook config for the current session, so a fresh patch lands on the **next** session — **or immediately after [`/reload-plugins`](https://code.claude.com/docs/en/plugins-reference)**, which reloads hook/MCP/LSP configs from disk without a full restart. `/reload-plugins` postdates the original "restart required" wording elsewhere in these notes; **prefer it over a restart**. (It reloads *config* — it does not re-fire SessionStart, so it won't re-run `patch-all` itself; that still needs a new session.)
+### CASE-03: CRLF in bash scripts breaks execution
+- **Symptom**: `bash: ./script: /bin/bash^M: bad interpreter`
+- **Root cause**: `core.autocrlf=true` converts LF→CRLF on checkout.
+- **Fix**: `.gitattributes` with `* text=auto eol=lf`.
 
-### CASE-14: Hand-patched files give false impression
-- **Symptom**: Works on developer's machine, fails on others.
-- **Root cause**: Manual fixes bypass the pipeline, so the pipeline was never tested.
-- **Fix**: Always test on clean install. Pipeline is sole source of truth.
+---
+
+## Path Handling
+
+### CASE-20: Backslash paths in settings.json hooks
+- **Symptom**: `Cannot find module 'C:\Users\smsme\Userssmsme.configainc...'` — backslashes eaten, path mangled. (Initially misdiagnosed as plugin bug — old CASE-18.)
+- **Root cause**: `settings.json` hook commands contain `C:\\...` paths. Backslashes get interpreted as escape characters during execution.
+- **Fix**: `fix-backslash-paths` converts `C:\...` to `C:/...`. Integrated into `patch-all` pipeline.
+- **Issue type**: `backslash_path`
+
+### CASE-23: Bare interpreter commands in settings.json hooks
+- **Symptom**: Stop/SessionStart/etc. hook errors like `'node'은(는) 내부 또는 외부 명령... 아닙니다` / `'node' is not recognized as an internal or external command` (CP949-garbled as `'node'��(��) ���� �Ǵ� �ܺ� ����...`). Hook command is `node <script>` or `python <script>`; the bare name is on Git Bash's PATH but not resolvable by cmd.exe at hook launch time. **Note**: do NOT confuse with the `<<` redirection error (`<<��(��) ������� �ʾҽ��ϴ�`) — that one is CASE-01 (BOM-corrupted polyglot `.cmd` wrapper).
+- **Root cause**: Claude Code dispatches `settings.json` hooks through cmd.exe, whose environment may not include the same PATH entries as Git Bash. Bare `node` / `python` / `python3` / `npx` / `npm` fail to resolve even though the binaries exist.
+- **Fix**: `fix-bare-commands` resolves the interpreter via `command -v` + `cygpath -m`, then rewrites the hook command to a quoted absolute path (e.g. `"C:/Program Files/nodejs/node.exe" <args>`). For `python`/`python3` it drops a non-functional interpreter via a functional probe (`"$name" -c ""` exits non-zero ⇒ a dead Microsoft Store App Execution Alias stub), so the command isn't rewritten to a still-broken stub — `python3` then falls back to the real `python` (see CASE-09). A location-independent probe is used (not a `WindowsApps/` path check) so a real Store-installed Python is kept. Integrated into `patch-all` pipeline; `verify` reports unresolved entries in dry-run mode.
+- **Issue type**: `bare_command`
+
+### CASE-19: Double-slash in CLAUDE_PLUGIN_ROOT
+- **Symptom**: Paths like `C://Users//smsme//...`
+- **Root cause**: awk `gsub(/\\\\/, "/")` matches single backslash due to regex double-escaping.
+- **Fix**: Replaced with `sed 's/[\\][\\]*/\//g'` which correctly collapses backslash sequences.
+
+---
+
+## Runtime & Wrappers
+
+### CASE-22: Self-recursive wrapper scripts
+- **Symptom**: `python3: SyntaxError` or `node: SyntaxError` — hook fails every invocation.
+- **Root cause**: Plugin ships bash wrappers with `.py`/`.js` extension that call the interpreter on themselves (e.g., `pretooluse.py` is `#!/bin/bash` but runs `python3 pretooluse.py`). Original code was overwritten.
+- **Fix**: `verify --fix` replaces recursive wrapper with `exit 0` (graceful no-op). Plugin update restores functionality.
+- **Issue type**: `recursive_wrapper`
+
+### CASE-24: Wrapper execs a bogus interpreter path
+- **Symptom**: Hook fails every invocation with `bash: /c/Users/.../<plugin>/<ver>/bash: No such file or directory` (or another bare interpreter name as the missing file). Affects hooks patched from interpreter-prefixed commands — e.g. learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse).
+- **Root cause**: When the original command is interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-start.sh`), `apply-patches` extracted the script path with `awk '{print $1}'`, which returns the *interpreter* (`bash`), not the path. The generated wrapper became `exec bash "$PLUGIN_ROOT/bash" "$@"` — a file that does not exist. `find-incompatible` can't re-flag it (the hook already points at `run-hook.cmd`) and `verify` only checked wrapper *existence*, not correctness — so it stayed hidden.
+- **Fix**: `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}/...` token regardless of position (`extract_path_part`) for the wrapper name, body, and preserved args, so fresh patches are correct. `verify --fix` detects a wrapper whose `exec` target is a single-segment `$PLUGIN_ROOT/<X>` that is a bare interpreter name or a nonexistent file, and repairs the body to `exec bash "$@"` (run-hook.cmd already passes the real target as `$@`), healing existing installs without a reinstall.
+- **Issue type**: `wrapper_broken`
+
+### CASE-21: Python not installed
+- **Symptom**: `validate_json()` and `verify` fail if Python is the only JSON runtime.
+- **Fix**: Python dependency removed. Fallback chain: `node` (guaranteed) → `powershell.exe` (built-in) → skip. BOM/CRLF sanitization is pure bash.
 
 ---
 
@@ -119,61 +143,37 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 
 ---
 
-## Path Handling
+## JSON & Patching
 
-### CASE-19: Double-slash in CLAUDE_PLUGIN_ROOT
-- **Symptom**: Paths like `C://Users//smsme//...`
-- **Root cause**: awk `gsub(/\\\\/, "/")` matches single backslash due to regex double-escaping.
-- **Fix**: Replaced with `sed 's/[\\][\\]*/\//g'` which correctly collapses backslash sequences.
+### CASE-05: Patched JSON validation failure
+- **Symptom**: After patching, hooks.json is invalid JSON.
+- **Root cause**: awk `index()` text replacement can produce invalid JSON on partial matches.
+- **Fix**: `validate_json()` checks after each patch; auto-restores from `.bak` on failure.
 
-### CASE-20: Backslash paths in settings.json hooks
-- **Symptom**: `Cannot find module 'C:\Users\smsme\Userssmsme.configainc...'` — backslashes eaten, path mangled. (Initially misdiagnosed as plugin bug — old CASE-18.)
-- **Root cause**: `settings.json` hook commands contain `C:\\...` paths. Backslashes get interpreted as escape characters during execution.
-- **Fix**: `fix-backslash-paths` converts `C:\...` to `C:/...`. Integrated into `patch-all` pipeline.
-- **Issue type**: `backslash_path`
-
-### CASE-23: Bare interpreter commands in settings.json hooks
-- **Symptom**: Stop/SessionStart/etc. hook errors like `'node'은(는) 내부 또는 외부 명령... 아닙니다` / `'node' is not recognized as an internal or external command` (CP949-garbled as `'node'��(��) ���� �Ǵ� �ܺ� ����...`). Hook command is `node <script>` or `python <script>`; the bare name is on Git Bash's PATH but not resolvable by cmd.exe at hook launch time. **Note**: do NOT confuse with the `<<` redirection error (`<<��(��) ������� �ʾҽ��ϴ�`) — that one is CASE-01 (BOM-corrupted polyglot `.cmd` wrapper).
-- **Root cause**: Claude Code dispatches `settings.json` hooks through cmd.exe, whose environment may not include the same PATH entries as Git Bash. Bare `node` / `python` / `python3` / `npx` / `npm` fail to resolve even though the binaries exist.
-- **Fix**: `fix-bare-commands` resolves the interpreter via `command -v` + `cygpath -m`, then rewrites the hook command to a quoted absolute path (e.g. `"C:/Program Files/nodejs/node.exe" <args>`). For `python`/`python3` it drops a non-functional interpreter via a functional probe (`"$name" -c ""` exits non-zero ⇒ a dead Microsoft Store App Execution Alias stub), so the command isn't rewritten to a still-broken stub — `python3` then falls back to the real `python` (see CASE-09). A location-independent probe is used (not a `WindowsApps/` path check) so a real Store-installed Python is kept. Integrated into `patch-all` pipeline; `verify` reports unresolved entries in dry-run mode.
-- **Issue type**: `bare_command`
+### CASE-06: installed_plugins.json v2 format
+- **Symptom**: Scanner finds zero plugins; all checks pass vacuously.
+- **Root cause**: v2 wraps plugins under `{"version": 2, "plugins": {...}}`.
+- **Fix**: Both `verify` and `find-incompatible` parsers handle v1 and v2 via `": [` pattern matching.
 
 ---
 
-## Runtime & Wrappers
+## Plugin Environment
 
-### CASE-21: Python not installed
-- **Symptom**: `validate_json()` and `verify` fail if Python is the only JSON runtime.
-- **Fix**: Python dependency removed. Fallback chain: `node` (guaranteed) → `powershell.exe` (built-in) → skip. BOM/CRLF sanitization is pure bash.
+### CASE-11: `$CLAUDE_PLUGIN_ROOT` not available in Bash tool
+- **Symptom**: `/win-hooks:fix` command fails — variable is empty.
+- **Fix**: Commands/skills parse `installed_plugins.json` with awk to find the install path dynamically.
 
-### CASE-22: Self-recursive wrapper scripts
-- **Symptom**: `python3: SyntaxError` or `node: SyntaxError` — hook fails every invocation.
-- **Root cause**: Plugin ships bash wrappers with `.py`/`.js` extension that call the interpreter on themselves (e.g., `pretooluse.py` is `#!/bin/bash` but runs `python3 pretooluse.py`). Original code was overwritten.
-- **Fix**: `verify --fix` replaces recursive wrapper with `exit 0` (graceful no-op). Plugin update restores functionality.
-- **Issue type**: `recursive_wrapper`
+### CASE-12: Multiple cached plugin versions
+- **Symptom**: Patching one version doesn't fix the active one.
+- **Root cause**: Cache contains multiple version dirs; only the one in `installed_plugins.json` is active.
+- **Fix**: Scanner reads `installed_plugins.json` for active paths, not all cached versions.
 
-### CASE-24: Wrapper execs a bogus interpreter path
-- **Symptom**: Hook fails every invocation with `bash: /c/Users/.../<plugin>/<ver>/bash: No such file or directory` (or another bare interpreter name as the missing file). Affects hooks patched from interpreter-prefixed commands — e.g. learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse).
-- **Root cause**: When the original command is interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-start.sh`), `apply-patches` extracted the script path with `awk '{print $1}'`, which returns the *interpreter* (`bash`), not the path. The generated wrapper became `exec bash "$PLUGIN_ROOT/bash" "$@"` — a file that does not exist. `find-incompatible` can't re-flag it (the hook already points at `run-hook.cmd`) and `verify` only checked wrapper *existence*, not correctness — so it stayed hidden.
-- **Fix**: `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}/...` token regardless of position (`extract_path_part`) for the wrapper name, body, and preserved args, so fresh patches are correct. `verify --fix` detects a wrapper whose `exec` target is a single-segment `$PLUGIN_ROOT/<X>` that is a bare interpreter name or a nonexistent file, and repairs the body to `exec bash "$@"` (run-hook.cmd already passes the real target as `$@`), healing existing installs without a reinstall.
-- **Issue type**: `wrapper_broken`
+### CASE-13: Plugin update overwrites patches
+- **Symptom**: After a plugin update its install path changes and the win-hooks patch is lost, so its hooks break again.
+- **Fix**: `patch-all` runs at every SessionStart and automatically re-patches the new path. By design.
+- **Mid-session caveat (updated for `/reload-plugins`)**: `patch-all` edits a plugin's `hooks.json` *during* SessionStart, but Claude Code already loaded that plugin's hook config for the current session, so a fresh patch lands on the **next** session — **or immediately after [`/reload-plugins`](https://code.claude.com/docs/en/plugins-reference)**, which reloads hook/MCP/LSP configs from disk without a full restart. `/reload-plugins` postdates the original "restart required" wording elsewhere in these notes; **prefer it over a restart**. (It reloads *config* — it does not re-fire SessionStart, so it won't re-run `patch-all` itself; that still needs a new session.)
 
----
-
-## Work Principles
-
-Sync checklist — every task must verify before committing:
-
-1. **CLAUDE.md** — New edge case? Add a CASE-XX entry.
-2. **README.md** — Pipeline or components changed? Update.
-3. **skills/diagnose/SKILL.md** — New error pattern or issue type? Update.
-4. **commands/status.md, fix.md** — Issue type or script changed? Update.
-5. **scripts/verify** — New issue type? Add check function + header comment.
-6. **Cross-check** — Issue types must match across: verify header, SKILL.md table, status.md list.
-7. **Version bump** — `plugin.json` + `marketplace.json`. Semver: `feat:` → minor, `fix:/docs:/refactor:` → patch. Tag `v{x.y.z}`. win-hooks is a fixer — new detection/fix capability = `feat:` (minor), existing detection broken and repaired = `fix:` (patch).
-
-When a Windows bug is reported, do NOT fix it directly on the machine. Pattern-match the error → add detection to scanner/verify → add automatic remediation to the pipeline. Goal: **automated self-healing**, not one-off fixes.
-
-When adding detection for a variant of an existing issue, **extend the existing check and issue type**. One root cause = one issue type. Same for docs — if a new CASE overlaps an existing one, fold it in. Sections with a single CASE go into a neighbor.
-
-Commit messages: one bullet per line, no line wrapping within a bullet. No co-author tags. No version bump lines.
+### CASE-14: Hand-patched files give false impression
+- **Symptom**: Works on developer's machine, fails on others.
+- **Root cause**: Manual fixes bypass the pipeline, so the pipeline was never tested.
+- **Fix**: Always test on clean install. Pipeline is sole source of truth.
