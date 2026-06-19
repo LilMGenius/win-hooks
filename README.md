@@ -59,6 +59,24 @@ scan plugins → patch hooks.json → normalize settings.json hook commands → 
 5. **Verifies** patched files — strips BOM from JSON and scripts, normalizes CRLF, validates JSON, repairs broken wrappers, recreates missing wrappers, disables recursive wrappers
 6. **Skips** anything already compatible — safe to run a thousand times
 
+The whole pass runs silently — you only hear from win-hooks when something needs your attention.
+
+### Confirming it ran
+
+Because the happy path is silent, win-hooks records a one-line **heartbeat** for every session-start run (disk only, never in your conversation, auto-rotated to the last 50 lines):
+
+```bash
+tail -n 5 ~/.claude/win-hooks/last-run.log
+```
+
+- `phase=done` → the self-heal completed this session.
+- a lone `phase=start` → it was cut off mid-run (almost always a timeout — see below).
+- no file → it hasn't dispatched yet on this build.
+
+`/win-hooks:status` surfaces this for you. Each heartbeat line also records `dur=` (how long the run took), `plugins=` (how many are installed), and `next_timeout=` (see below).
+
+**Adaptive timeout.** Scanning many plugins is slow on Windows — every plugin costs a `node`/`powershell` spawn plus a handful of forks, and Defender taxes each one — so a single fixed timeout fits no one (too tight at 100+ plugins, wasteful at 5). Instead win-hooks **right-sizes its own SessionStart timeout to your machine** each run: `timeout ≈ 20s + 4s × (plugin count)`, clamped to a round **1–10 min** (60s–600s, matching Claude Code's command-hook ceiling). With 18 plugins that's ~92s; with 150 it scales to the 10 min cap automatically. The shipped default is the 1 min floor; the new value applies next session (or after `/reload-plugins`).
+
 ## How It Works
 
 ### The Polyglot Trick
@@ -107,7 +125,7 @@ Wrappers live in a dedicated `_hooks/` directory — **original plugin files are
 
 ## Plugin Updates
 
-When a plugin updates, its install path changes and patches are lost. **This is by design.** Restart Claude Code → win-hooks re-detects and re-patches automatically. Zero maintenance.
+When a plugin updates, its install path changes and patches are lost. **This is by design.** Run `/reload-plugins` (or restart Claude Code) → win-hooks re-detects and re-patches automatically. Zero maintenance.
 
 ## Requirements
 
@@ -124,7 +142,7 @@ When a plugin updates, its install path changes and patches are lost. **This is 
 | Component | Purpose |
 |-----------|---------|
 | `hooks/hooks.json` | SessionStart hook — triggers auto-patching |
-| `hooks/patch-all` | Orchestrator — platform check → run pipeline |
+| `hooks/patch-all` | Orchestrator — platform check → run pipeline → write heartbeat (`~/.claude/win-hooks/last-run.log`) |
 | `hooks/run-hook.cmd` | Polyglot template — copied to each patched plugin |
 | `scripts/find-incompatible` | Scanner — detects incompatible hooks across all plugins |
 | `scripts/apply-patches` | Patcher — creates wrappers and updates hooks.json |

@@ -25,7 +25,22 @@ sed '1s/^\xEF\xBB\xBF//' ~/.claude/plugins/installed_plugins.json | awk '
 
 Save the output path as PLUGIN_ROOT.
 
-### Step 2: Run the health check (verify)
+### Step 2: Show when the self-heal last ran (heartbeat)
+
+win-hooks records every SessionStart auto-patch run to a rotating heartbeat log. Read it to confirm the self-heal is actually firing each session:
+
+```bash
+tail -n 5 ~/.claude/win-hooks/last-run.log 2>/dev/null || echo "no heartbeat yet — self-heal has not run since upgrading to the heartbeat build (or never dispatched)"
+```
+
+Interpret the most recent run:
+- **`phase=done`** — the self-heal completed successfully this/last session (healthy).
+- **lone `phase=start`** with no following terminal line — the run was killed mid-way (e.g. SessionStart timeout or hang). The timeout is adaptive (it grows with your plugin count), so this should self-correct next session; if it persists, `/reload-plugins` or restart to register the freshly-sized timeout. Check the previous line's `dur=` vs `next_timeout=` to see how close the run came to the limit.
+- **no file at all** — the SessionStart hook has not dispatched (e.g. plugin disabled, no Git Bash, or running an older build without the heartbeat).
+
+The line also reports `patched=` (plugins fixed that run) and `verify=` (health summary).
+
+### Step 3: Run the health check (verify)
 
 ```bash
 bash "<PLUGIN_ROOT>/scripts/verify"
@@ -43,7 +58,7 @@ This checks ALL installed plugins' hooks for:
 - **backslash_path**: settings.json hook commands contain Windows backslash paths
 - **bare_command**: settings.json hook commands start with a bare interpreter (node/python/python3/npx/npm) that cmd.exe can't resolve at hook launch
 
-### Step 3: Run the incompatibility scanner
+### Step 4: Run the incompatibility scanner
 
 ```bash
 bash "<PLUGIN_ROOT>/scripts/find-incompatible"
@@ -51,7 +66,7 @@ bash "<PLUGIN_ROOT>/scripts/find-incompatible"
 
 This outputs tab-separated lines (plugin, path, hooks_file, event, command) for hooks that are incompatible with Windows. Empty output means all hooks are compatible.
 
-### Step 4: Present results as a table
+### Step 5: Present results as a table
 
 Combine results from both verify and find-incompatible:
 
@@ -75,9 +90,9 @@ To check for patched plugins:
 find ~/.claude/plugins/cache -name "hooks.json.bak" 2>/dev/null
 ```
 
-### Step 5: Recommendations
+### Step 6: Recommendations
 
 If issues are found:
 - For BOM/CRLF/wrapper issues: suggest running `/win-hooks:fix` (auto-repairs with `verify --fix`)
-- For incompatible hooks: suggest restarting Claude Code (triggers automatic patching)
+- For incompatible hooks: suggest `/reload-plugins` or restarting Claude Code (a fresh session re-runs the SessionStart auto-patch)
 - For broken JSON with `.bak`: suggest restoring from backup and re-patching

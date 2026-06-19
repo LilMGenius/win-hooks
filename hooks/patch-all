@@ -18,6 +18,36 @@ case "$(uname -s)" in
     exit 0 ;; # Not Windows - skip
 esac
 
+# ── Heartbeat ───────────────────────────────────────────────────────
+# Proof-of-run on disk so "did SessionStart actually heal this session?"
+# is answerable — the happy path is otherwise completely silent (no stdout,
+# no context, no marker), making a healthy run indistinguishable from one
+# that never fired or was killed by the SessionStart timeout.
+# Written ONLY to disk (never stdout) so it adds zero session-context noise,
+# and rotated to the last 50 lines so it never grows unbounded (lean).
+#   • no log line at all      ⇒ hook never dispatched
+#   • lone `phase=start` line ⇒ killed mid-run (e.g. timeout / hang)
+#   • a terminal `phase=...`  ⇒ ran to that stage; `phase=done` = full success
+WH_LOG="${HOME:-$USERPROFILE}/.claude/win-hooks/last-run.log"
+WH_PHASE="start"
+WH_T0=$(date +%s)
+PATCHED=0
+mkdir -p "$(dirname "$WH_LOG")" 2>/dev/null || true
+_wh_beat() {
+  local code=$? now; now=$(date +%s)
+  { printf '%s\tphase=%s\texit=%d\tdur=%ss\tplugins=%s\tnext_timeout=%s\tpatched=%s\tverify=%s\n' \
+      "$(date '+%Y-%m-%dT%H:%M:%S')" "$WH_PHASE" "$code" "$(( now - ${WH_T0:-now} ))" \
+      "${N:-?}" "${WH_TIMEOUT:-?}" "${PATCHED:-0}" "${WH_VERIFY:-?}" \
+      >> "$WH_LOG"
+    tail -n 50 "$WH_LOG" > "${WH_LOG}.tmp" 2>/dev/null && mv "${WH_LOG}.tmp" "$WH_LOG"
+  } 2>/dev/null || true
+}
+trap _wh_beat EXIT
+# Early start marker — survives a hard timeout-kill that pre-empts the EXIT
+# trap, so an aborted run stays distinguishable from one that never fired.
+printf '%s\tphase=start\texit=-\tdur=-\tplugins=-\tnext_timeout=-\tpatched=-\tverify=-\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S')" >> "$WH_LOG" 2>/dev/null || true
+
 # ── Paths ───────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -27,6 +57,52 @@ SCRIPTS_DIR="${PLUGIN_ROOT}/scripts"
 if [[ ! -f "$TEMPLATE_CMD" ]]; then
   echo "win-hooks: template run-hook.cmd not found at ${TEMPLATE_CMD}" >&2
   exit 1
+fi
+
+# ── Adaptive timeout self-tuning ────────────────────────────────────
+# The SessionStart timeout lives in THIS plugin's hooks.json, which Claude
+# Code reads BEFORE dispatching patch-all — so patch-all cannot set its own
+# runtime limit, but it CAN size the NEXT session's limit to the local
+# machine. Run cost is ~linear in installed-plugin count (per plugin: one
+# `node` JSON-validate plus ~10 coreutils forks; on Windows, process spawn —
+# inflated by Defender — dominates). So size the limit by count:
+#     timeout(ms) = clamp(OVERHEAD + PER_PLUGIN * N, FLOOR, CAP)
+# Constants are deliberately conservative (cover a slow HDD laptop with
+# Defender, ~3-4x the spawn cost measured on a mid box); over-provisioning a
+# fast machine is harmless because the value is only a backstop — a healthy
+# run exits as soon as work is done and never approaches it. Written EARLY
+# (before the expensive pipeline) so even a run that later times out has
+# already right-sized the next session, avoiding a stuck-bootstrap on large
+# installs. Clamp band is a round 60000-600000 (1-10 min): FLOOR=60s is the
+# shipped hooks.json default too (the early self-tune right-sizes from the
+# first run, so the default only needs a sane minimum, not a guess); CAP=600s
+# matches Claude Code's command-hook default ceiling. Past ~145 plugins the
+# formula saturates at CAP and the durable fix is cutting per-plugin spawn
+# cost (batch the node validation), not a bigger timeout. Effect is
+# next-session / after `/reload-plugins` (hooks.json is
+# cached at session start). Self-edit is JSON-validated and only applied on
+# a real change, so it never churns or corrupts the plugin's own config.
+OWN_HOOKS="${PLUGIN_ROOT}/hooks/hooks.json"
+INSTALLED="${HOME:-$USERPROFILE}/.claude/plugins/installed_plugins.json"
+if [[ -f "$OWN_HOOKS" && -f "$INSTALLED" ]] && command -v node >/dev/null 2>&1; then
+  N=$(grep -c '"installPath"' "$INSTALLED" 2>/dev/null || echo 0)
+  OVERHEAD=20000; PER_PLUGIN=4000; FLOOR=60000; CAP=600000
+  WANT=$(( OVERHEAD + PER_PLUGIN * N ))
+  (( WANT < FLOOR )) && WANT=$FLOOR
+  (( WANT > CAP ))   && WANT=$CAP
+  CUR=$(grep -oE '"timeout":[[:space:]]*[0-9]+' "$OWN_HOOKS" | grep -oE '[0-9]+' | head -1) || CUR=""
+  if [[ -n "$CUR" && "$CUR" != "$WANT" ]]; then
+    TMP="${OWN_HOOKS}.tmp.$$"
+    if sed -E 's/("timeout":[[:space:]]*)[0-9]+/\1'"$WANT"'/' "$OWN_HOOKS" > "$TMP" 2>/dev/null \
+       && node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$TMP" 2>/dev/null; then
+      mv "$TMP" "$OWN_HOOKS" && WH_TIMEOUT="${CUR}->${WANT}"
+    else
+      rm -f "$TMP" 2>/dev/null || true
+      WH_TIMEOUT="keep:${CUR}"
+    fi
+  else
+    WH_TIMEOUT="${CUR:-?}"
+  fi
 fi
 
 # ── Best-effort: make `python3` resolve globally ────────────────────
@@ -51,6 +127,7 @@ if ! { command -v python3 >/dev/null 2>&1 && python3 -c "" >/dev/null 2>&1; } \
 fi
 
 # ── Run pipeline: find-incompatible | apply-patches ─────────────────
+WH_PHASE="pipeline"
 RESULT=$(bash "${SCRIPTS_DIR}/find-incompatible" \
   | bash "${SCRIPTS_DIR}/apply-patches" "$TEMPLATE_CMD" 2>&1) || {
   echo "win-hooks: patch pipeline failed" >&2
@@ -66,6 +143,7 @@ fi
 
 # ── Fix backslash paths in settings.json ────────────────────────────
 # Convert C:\... to C:/... in hook commands to prevent path mangling
+WH_PHASE="settings-fixers"
 if [[ -f "${SCRIPTS_DIR}/fix-backslash-paths" ]]; then
   bash "${SCRIPTS_DIR}/fix-backslash-paths" 2>&1 | grep -v "^hooks\." || true
 fi
@@ -79,10 +157,22 @@ fi
 
 # ── Post-patch verification ─────────────────────────────────────────
 # Run verify --fix to detect and auto-repair any remaining issues
-# (BOM, CRLF, broken JSON, missing wrappers)
+# (BOM, CRLF, broken JSON, missing wrappers). Captured unconditionally so
+# the healthy summary lands in the heartbeat too — verify exits 0 when
+# healthy, so the old `|| {...}` form silently dropped that line.
+WH_VERIFY="skipped"
 if [[ -x "${SCRIPTS_DIR}/verify" ]] || [[ -f "${SCRIPTS_DIR}/verify" ]]; then
-  VERIFY_OUT=$(bash "${SCRIPTS_DIR}/verify" --fix 2>&1) || {
+  WH_PHASE="verify"
+  # `|| VERIFY_RC=$?` keeps `set -e` from aborting here when verify exits
+  # non-zero (its exit code is the issue count), and captures that code.
+  VERIFY_RC=0
+  VERIFY_OUT=$(bash "${SCRIPTS_DIR}/verify" --fix 2>&1) || VERIFY_RC=$?
+  WH_VERIFY=$(printf '%s\n' "$VERIFY_OUT" | grep "^win-hooks verify:" | tail -n1 | sed 's/^win-hooks verify: //') || true
+  WH_VERIFY="${WH_VERIFY:-rc=$VERIFY_RC}"
+  if [[ $VERIFY_RC -ne 0 ]]; then
     echo "win-hooks: verify found issues (auto-fixed where possible)" >&2
-    echo "$VERIFY_OUT" | grep -v "^win-hooks verify:" >&2
-  }
+    printf '%s\n' "$VERIFY_OUT" | grep -v "^win-hooks verify:" >&2
+  fi
 fi
+
+WH_PHASE="done"

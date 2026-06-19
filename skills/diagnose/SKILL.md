@@ -49,7 +49,7 @@ Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
 
 ### "bash: /c/Users/.../<plugin>/<version>/bash: No such file or directory" on any hook event
 **Root cause**: A win-hooks-generated wrapper execs a bogus target. When the original hook command was interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks/x.sh`), an older `apply-patches` took the interpreter (`bash`) as the script path, so the wrapper became `exec bash "$PLUGIN_ROOT/bash"` — a nonexistent file. The missing-file name is the interpreter (`bash`, `sh`, etc.). Seen on learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse). It hid from `verify` because the hook already pointed at `run-hook.cmd` and only wrapper *existence* was checked.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position. If a referenced `_hooks/` wrapper is *entirely missing* (interrupted patch or deletion) rather than just mis-bodied, `verify --fix` recreates it — passthrough `exec bash "$@"` when run-hook.cmd forwards the target, else regenerated from `hooks.json.bak` (bash path-bake or probed-python bake). **Note**: this fixes the disk; a running session that cached the old wrapper config still needs a restart.
+**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position. If a referenced `_hooks/` wrapper is *entirely missing* (interrupted patch or deletion) rather than just mis-bodied, `verify --fix` recreates it — passthrough `exec bash "$@"` when run-hook.cmd forwards the target, else regenerated from `hooks.json.bak` (bash path-bake or probed-python bake). **Note**: this fixes the disk; a running session that cached the old wrapper config still needs `/reload-plugins` (or a restart) to pick it up.
 
 ### "Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases."
 **Root cause**: A hook invokes bare `python3` (e.g. hookify on UserPromptSubmit/PreToolUse/PostToolUse/Stop), but `python3` resolves to the Microsoft Store **App Execution Alias stub** — a `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` reparse point that satisfies `command -v`/`where` yet only prints this message. A real `python.exe` is often present but can't simply be copied to `python3.exe` because system Python dirs (`C:\ProgramData\...`, `C:\Program Files\...`) aren't writable without admin.
@@ -163,7 +163,21 @@ Any of these can have incompatible commands:
 
 ## Automatic Prevention
 
-The win-hooks plugin runs its patcher at every SessionStart. If you install or update a plugin, simply restart Claude Code - the patcher will detect and fix new incompatibilities automatically.
+The win-hooks plugin runs its patcher at every SessionStart. If you install or update a plugin, run `/reload-plugins` or restart Claude Code — a fresh session re-runs the patcher, which detects and fixes new incompatibilities automatically. (`/reload-plugins` reloads patched configs from disk mid-session, but only a new session re-fires SessionStart to re-run the patcher itself.)
+
+### Is the self-heal actually firing? (heartbeat)
+
+If a plugin keeps reverting to a broken state across sessions (e.g. hookify back to bare `python3` after an update) but `patch-all` fixes it when run by hand, the SessionStart auto-heal may not be completing. It writes a heartbeat on every run:
+
+```bash
+tail -n 5 ~/.claude/win-hooks/last-run.log 2>/dev/null
+```
+
+- **`phase=done`** — the self-heal ran to completion (healthy).
+- **lone `phase=start`** (no following terminal line) — it was killed mid-run, almost always the SessionStart **timeout**. The timeout is adaptive (`patch-all` re-sizes its own `hooks/hooks.json` to `~20s + 4s × plugin_count`, clamped to a round 1–10 min, written early so even a killed run sizes the next one). It should self-correct next session; if it persists, `/reload-plugins` or restart to register the freshly-sized value, and compare the prior line's `dur=` against `next_timeout=`.
+- **no file at all** — the hook never dispatched: plugin disabled, no Git Bash found by `run-hook.cmd`, or an older build without the heartbeat. Re-check install/enable state and Git for Windows.
+
+This is CASE-25. The auto-patch chain can take ~20-30s over many plugins (per-plugin `node`/`powershell` spawns + a double scan) and far longer on slow machines with large installs, which is why a fixed 30s timeout silently killed it. The timeout is now adaptive per plugin count (see above). Note CASE-13: a fix applied during this session's SessionStart takes effect after `/reload-plugins` or **next** session.
 
 ## Rollback
 
