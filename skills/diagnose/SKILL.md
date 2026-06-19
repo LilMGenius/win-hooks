@@ -14,188 +14,88 @@ description: |
 
 # Win-Hooks Diagnostics
 
-Diagnose and fix Claude Code plugin hook compatibility issues on Windows.
+Diagnose and fix Claude Code plugin hook compatibility issues on Windows. Two structural causes underlie everything: plugins ship `.sh` scripts cmd.exe can't run, and bare Unix commands / interpreters that aren't resolvable when the hook launches. The remedy is always **`/win-hooks:fix`** — the patterns below are for identifying what you're seeing. Canonical root-cause write-ups live in [`CLAUDE.md`](../../CLAUDE.md) as CASE-XX.
 
 ## Common Error Patterns
 
-### "JSON Parse error: Unrecognized token ''" / "﻿:: command not found" / "﻿#!/bin/bash: No such file or directory" / "<<(을)를 지정된 경로를 찾지 못했습니다"
-**Root cause**: UTF-8 BOM (EF BB BF) in any hook file. In hooks.json it causes JSON parse errors; in `run-hook.cmd` it breaks bash's `:` builtin AND it pushes the leading `:` off line-start so cmd.exe stops recognizing it as a label and instead parses the polyglot's `<<` heredoc opener as redirection (mojibake: `<<��(��) ������� �ʾҽ��ϴ�`); in wrapper scripts it breaks shebang parsing. Typically caused by Windows editors or PowerShell `Out-File`.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` strips BOM from every file in `hooks/`, `_hooks/`, and any file referenced from `hooks.json` (e.g., `scripts/run-hook.cmd` shipped by ralph-loop).
+| Symptom (error text) | Cause | CASE |
+|---|---|---|
+| `JSON Parse error: Unrecognized token ''` · `﻿:: command not found` · `﻿#!/bin/bash: No such file or directory` · `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ...`) | UTF-8 BOM in a hooks.json / wrapper / polyglot `.cmd` | CASE-01 |
+| `Hook load failed: JSON Parse error` | BOM, CRLF, or corrupted/invalid hooks.json | CASE-01/02/05 |
+| `SyntaxError` from python3/node on a `.py`/`.js` hook file | a bash wrapper with a `.py`/`.js` name calling the interpreter on itself | CASE-22 |
+| `No such file or directory` for a hook command | a `.sh` script or bare command cmd.exe can't run | CASE-07/08 |
+| `MODULE_NOT_FOUND` in a Node hook | a backslash `C:\...` path mangled in settings.json | CASE-20 |
+| `'node' is not recognized...` / `'node'은(는) 내부 또는 외부 명령...` (mojibake `'node'��...`) | a bare interpreter in settings.json not on cmd.exe's PATH | CASE-23 |
+| `bash: .../<interpreter>: No such file or directory` | a generated wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target | CASE-24 |
+| `Python was not found; run without arguments to install from the Microsoft Store...` | bare `python3` resolving to the Microsoft Store alias stub | CASE-09 |
 
-### "Hook load failed: JSON Parse error"
-**Root causes** (check in order):
-1. UTF-8 BOM in hooks.json
-2. CRLF line endings causing parser issues
-3. Corrupted hooks.json from interrupted patching
-4. Invalid JSON syntax from bad text replacement
+**Don't confuse the two CP949-garbled errors:** `<<(을)를 지정된 경로...` is a BOM-corrupted polyglot wrapper (CASE-01); `'node'...내부 또는 외부 명령` is a bare interpreter in settings.json (CASE-23).
 
-**Fix**: Run `/win-hooks:fix` which runs the full pipeline including `verify --fix`.
+`/win-hooks:fix` heals files on disk, but a running session already cached its hook config — pick up the fix with `/reload-plugins` or a new session (CASE-13).
 
-### "SyntaxError" from python3/node on a .py/.js hook file
-**Root cause**: Plugin ships bash wrapper scripts with `.py`/`.js` extension that call the interpreter on themselves (e.g., `pretooluse.py` is `#!/bin/bash` but contains `python3 pretooluse.py`). Python/Node can't parse bash syntax.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` disables recursive wrappers with `exit 0`.
+## Diagnosis
 
-### "No such file or directory" for hook command
-**Root cause**: Hook references a `.sh` script or bare command that doesn't exist on Windows.
-**Fix**: Run `/win-hooks:fix` to create polyglot wrappers.
+1. **Confirm platform** is `win32` (else this skill doesn't apply).
+2. **Find PLUGIN_ROOT:**
+   ```bash
+   sed '1s/^\xEF\xBB\xBF//' ~/.claude/plugins/installed_plugins.json | awk '
+     /win-hooks/ { found=1 }
+     found && /"installPath"/ {
+       sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
+       sub(/".*/, "")
+       print
+       exit
+     }
+   ' | sed 's/[\\][\\]*/\//g'
+   ```
+3. **Health check:** `bash "<PLUGIN_ROOT>/scripts/verify"` — detects:
 
-### "MODULE_NOT_FOUND" in Node.js hooks
-**Root cause**: Windows backslash paths in `settings.json` hook commands get mangled during execution — backslashes are interpreted as escape characters, producing paths like `Userssmsme.configaincreport-usage.js`.
-**Fix**: Run `/win-hooks:fix` which converts `C:\...` to `C:/...` in settings.json hooks via `fix-backslash-paths`.
+   | Issue type | Meaning |
+   |------------|---------|
+   | bom | UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json) |
+   | json_invalid | hooks.json is not valid JSON |
+   | json_crlf | CRLF line endings in hooks.json |
+   | wrapper_missing | Patched hook references nonexistent wrapper script (`--fix` recreates it) |
+   | wrapper_broken | Wrapper execs a bogus $PLUGIN_ROOT/<interpreter> target (bash: .../bash: No such file) |
+   | cmd_missing | _hooks/run-hook.cmd is missing (referenced by hooks.json) |
+   | recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |
+   | python3_stub | Hook uses bare python3/python that resolves to a Microsoft Store stub (or is missing) |
+   | backslash_path | settings.json hook command has Windows backslash paths |
+   | bare_command | settings.json hook command uses bare interpreter not resolvable by cmd.exe |
 
-### "'node' is not recognized as an internal or external command" / "'node'은(는) 내부 또는 외부 명령... 아닙니다" on Stop/SessionStart hooks
-**Root cause**: `settings.json` hook command starts with a bare interpreter (`node`, `python`, `python3`, `npx`, `npm`) that's on Git Bash's PATH but not resolvable by cmd.exe at hook launch. Error text may appear CP949-garbled (e.g. `'node'��(��) ���� �Ǵ� �ܺ� ����...`). **Note**: the similar-looking `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ������� �ʾҽ��ϴ�`) is a *different* error — that one is BOM-corrupted polyglot wrapper (see the BOM section above).
-**Fix**: Run `/win-hooks:fix` — `fix-bare-commands` rewrites the command to a quoted absolute path like `"C:/Program Files/nodejs/node.exe" <script>`.
+4. **Scan:** `bash "<PLUGIN_ROOT>/scripts/find-incompatible"`
+5. **Report** as a table: `Plugin | Issue | Detail | Status`.
 
-### "bash: /c/Users/.../<plugin>/<version>/bash: No such file or directory" on any hook event
-**Root cause**: A win-hooks-generated wrapper execs a bogus target. When the original hook command was interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks/x.sh`), an older `apply-patches` took the interpreter (`bash`) as the script path, so the wrapper became `exec bash "$PLUGIN_ROOT/bash"` — a nonexistent file. The missing-file name is the interpreter (`bash`, `sh`, etc.). Seen on learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse). It hid from `verify` because the hook already pointed at `run-hook.cmd` and only wrapper *existence* was checked.
-**Fix**: Run `/win-hooks:fix` — `verify --fix` detects the bogus single-segment `$PLUGIN_ROOT/<interpreter>` target and repairs the wrapper to `exec bash "$@"` (the real target is already passed by run-hook.cmd). Fresh patches are correct because `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}` path token regardless of position. If a referenced `_hooks/` wrapper is *entirely missing* (interrupted patch or deletion) rather than just mis-bodied, `verify --fix` recreates it — passthrough `exec bash "$@"` when run-hook.cmd forwards the target, else regenerated from `hooks.json.bak` (bash path-bake or probed-python bake). **Note**: this fixes the disk; a running session that cached the old wrapper config still needs `/reload-plugins` (or a restart) to pick it up.
+## Fix
 
-### "Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases."
-**Root cause**: A hook invokes bare `python3` (e.g. hookify on UserPromptSubmit/PreToolUse/PostToolUse/Stop), but `python3` resolves to the Microsoft Store **App Execution Alias stub** — a `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` reparse point that satisfies `command -v`/`where` yet only prints this message. A real `python.exe` is often present but can't simply be copied to `python3.exe` because system Python dirs (`C:\ProgramData\...`, `C:\Program Files\...`) aren't writable without admin.
-**Fix**: Run `/win-hooks:fix` — `find-incompatible` always flags bare `python3`/`python` `${CLAUDE_PLUGIN_ROOT}` hooks on Windows, and `apply-patches` wraps them, baking in the absolute path of a real Python found by a functional probe at patch time (`python3`/`python`/`py`, first one where `python -c ""` succeeds). The probe is location-independent, so a legitimately Microsoft-Store-installed Python is used rather than mistaken for the dead stub; if no Python works at all, the wrapper is a graceful no-op. A best-effort `python.exe → python3.exe` copy also runs when the Python dir is writable.
-
-## Why Hooks Break on Windows
-
-Most Claude Code plugins are developed on Unix. Their hooks use:
-- `.sh` scripts called directly (cmd.exe cannot execute these)
-- Bare Unix commands not in Windows PATH (e.g., `semgrep`, `shellcheck`)
-- `${CLAUDE_PLUGIN_ROOT}` path with `.sh` extension (triggers Claude Code's auto-detection)
-- Unix-specific shell syntax (`$(...)`, pipes, etc.)
-
-## Diagnosis Procedure
-
-### Step 1: Identify Platform
-
-Check that platform is `win32`. If not, this skill does not apply.
-
-### Step 2: Find win-hooks install path
-
-```bash
-sed '1s/^\xEF\xBB\xBF//' ~/.claude/plugins/installed_plugins.json | awk '
-  /win-hooks/ { found=1 }
-  found && /"installPath"/ {
-    sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
-    sub(/".*/, "")
-    print
-    exit
-  }
-' | sed 's/[\\][\\]*/\//g'
-```
-
-Save the output path as PLUGIN_ROOT.
-
-### Step 3: Run health check
-
-```bash
-bash "<PLUGIN_ROOT>/scripts/verify"
-```
-
-This detects:
-| Issue Type | Meaning |
-|------------|---------|
-| bom | UTF-8 BOM in any hook file (hooks/, _hooks/, or any file referenced from hooks.json) |
-| json_invalid | hooks.json is not valid JSON |
-| json_crlf | CRLF line endings in hooks.json |
-| wrapper_missing | Patched hook references nonexistent wrapper script (`--fix` recreates it) |
-| wrapper_broken | Wrapper execs a bogus $PLUGIN_ROOT/<interpreter> target (bash: .../bash: No such file) |
-| cmd_missing | _hooks/run-hook.cmd is missing |
-| recursive_wrapper | Bash wrapper (.py/.js) calls python3/node on itself |
-| python3_stub | Hook uses bare python3/python that resolves to a Microsoft Store stub (or is missing) |
-| backslash_path | settings.json hook command has Windows backslash paths |
-| bare_command | settings.json hook command uses bare interpreter not resolvable by cmd.exe |
-
-### Step 4: Run incompatibility scanner
-
-```bash
-bash "<PLUGIN_ROOT>/scripts/find-incompatible"
-```
-
-### Step 5: Report Findings
-
-Present a table:
-```
-| Plugin | Issue | Detail | Status |
-|--------|-------|--------|--------|
-| name   | type  | info   | OK/FIX |
-```
-
-## Fix Procedure
-
-### Automatic (recommended)
+**Automatic (recommended):** run `/win-hooks:fix`, or directly:
 
 ```bash
 bash "<PLUGIN_ROOT>/hooks/patch-all"
 ```
 
-This runs the full pipeline:
-1. `find-incompatible` → detects incompatible hooks
-2. `apply-patches` → creates wrappers, patches hooks.json (sanitizes BOM/CRLF, validates JSON)
-3. `verify --fix` → auto-repairs any remaining encoding issues
+This runs the full pipeline (scanner → patcher → settings.json fixers → `verify --fix`); see [`commands/fix.md`](../../commands/fix.md) for the stages.
 
-### Manual repair for specific files
+**Manual:** `bash "<PLUGIN_ROOT>/scripts/verify" --fix` repairs BOM/CRLF/wrappers in place. To restore a broken hooks.json from its backup, `cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json`, then re-run patch-all.
 
-For BOM/CRLF issues only:
-```bash
-bash "<PLUGIN_ROOT>/scripts/verify" --fix
-```
+## Is the self-heal firing? (heartbeat)
 
-For restoring a broken hooks.json from backup:
-```bash
-cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
-```
+win-hooks runs at every SessionStart; after installing or updating a plugin, `/reload-plugins` (or a restart) re-runs it. (`/reload-plugins` reloads config from disk but does not re-fire SessionStart, so the patcher itself needs a new session — CASE-13.)
 
-Then re-run patch-all.
-
-## Hook Event Types
-
-Any of these can have incompatible commands:
-
-| Category | Events |
-|----------|--------|
-| Session | SessionStart, SessionEnd, InstructionsLoaded |
-| User Input | UserPromptSubmit |
-| Tools | PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest |
-| Agents | SubagentStart, SubagentStop, Stop, TeammateIdle, TaskCompleted |
-| Context | PreCompact, PostCompact, ConfigChange |
-| Integration | Notification, Elicitation, ElicitationResult |
-| Worktree | WorktreeCreate, WorktreeRemove |
-
-## Automatic Prevention
-
-The win-hooks plugin runs its patcher at every SessionStart. If you install or update a plugin, run `/reload-plugins` or restart Claude Code — a fresh session re-runs the patcher, which detects and fixes new incompatibilities automatically. (`/reload-plugins` reloads patched configs from disk mid-session, but only a new session re-fires SessionStart to re-run the patcher itself.)
-
-### Is the self-heal actually firing? (heartbeat)
-
-If a plugin keeps reverting to a broken state across sessions (e.g. hookify back to bare `python3` after an update) but `patch-all` fixes it when run by hand, the SessionStart auto-heal may not be completing. It writes a heartbeat on every run:
+If a plugin keeps reverting across sessions yet `patch-all` fixes it by hand, check the heartbeat:
 
 ```bash
-tail -n 5 ~/.claude/win-hooks/last-run.log 2>/dev/null
+tail -n 5 ~/.claude/win-hooks/last-run.log
 ```
 
-- **`phase=done`** — the self-heal ran to completion (healthy).
-- **lone `phase=start`** (no following terminal line) — it was killed mid-run, almost always the SessionStart **timeout**. The timeout is adaptive (`patch-all` re-sizes its own `hooks/hooks.json` to `~20s + 4s × plugin_count`, clamped to a round 1–10 min, written early so even a killed run sizes the next one). It should self-correct next session; if it persists, `/reload-plugins` or restart to register the freshly-sized value, and compare the prior line's `dur=` against `next_timeout=`.
-- **no file at all** — the hook never dispatched: plugin disabled, no Git Bash found by `run-hook.cmd`, or an older build without the heartbeat. Re-check install/enable state and Git for Windows.
+- `phase=done` → healed this session.
+- lone `phase=start` → killed mid-run (usually the timeout; it auto-sizes to your plugin count and self-corrects next session).
+- no file → never dispatched (plugin disabled, no Git Bash, or a pre-heartbeat build).
 
-This is CASE-25. The auto-patch chain can take ~20-30s over many plugins (per-plugin `node`/`powershell` spawns + a double scan) and far longer on slow machines with large installs, which is why a fixed 30s timeout silently killed it. The timeout is now adaptive per plugin count (see above). Note CASE-13: a fix applied during this session's SessionStart takes effect after `/reload-plugins` or **next** session.
-
-## Rollback
-
-```bash
-# Restore a plugin's original hooks.json
-cp <plugin>/hooks/hooks.json.bak <plugin>/hooks/hooks.json
-```
+`/win-hooks:status` surfaces and interprets this. Full rationale: CASE-25.
 
 ## Troubleshooting
 
-**Hook still errors after patching:**
-- Check if Git Bash is installed at `C:\Program Files\Git\bin\bash.exe`
-- Verify the wrapper script has correct content: `cat <plugin>/_hooks/<wrapper-name>`
-- Run with debug: `claude --debug hooks` to see hook execution details
-
-**python3 not found / "Python was not found" Microsoft Store stub:**
-- win-hooks wraps bare `python3` hook commands so a real (non-WindowsApps) python is resolved at runtime, and best-effort copies `python.exe` → `python3.exe` when the Python dir is writable
-- If no real Python is installed at all (only the Microsoft Store stub), plugins that require Python will still fail — install Python from python.org and restart
-
-**Plugin update overwrites fix:**
-- This is expected. Restart Claude Code and win-hooks will re-patch automatically.
+- **Still erroring after a fix:** confirm Git Bash at `C:\Program Files\Git\bin\bash.exe`, inspect the wrapper (`cat <plugin>/_hooks/<name>`), and run `claude --debug hooks` for execution detail.
+- **Only the Microsoft Store python3 stub is installed:** install a real Python from [python.org](https://www.python.org/) and restart.
+- **A plugin update reverted a fix:** expected — `/reload-plugins` or restart re-patches automatically.

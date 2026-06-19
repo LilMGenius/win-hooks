@@ -67,21 +67,12 @@ fi
 # `node` JSON-validate plus ~10 coreutils forks; on Windows, process spawn —
 # inflated by Defender — dominates). So size the limit by count:
 #     timeout(ms) = clamp(OVERHEAD + PER_PLUGIN * N, FLOOR, CAP)
-# Constants are deliberately conservative (cover a slow HDD laptop with
-# Defender, ~3-4x the spawn cost measured on a mid box); over-provisioning a
-# fast machine is harmless because the value is only a backstop — a healthy
-# run exits as soon as work is done and never approaches it. Written EARLY
-# (before the expensive pipeline) so even a run that later times out has
-# already right-sized the next session, avoiding a stuck-bootstrap on large
-# installs. Clamp band is a round 60000-600000 (1-10 min): FLOOR=60s is the
-# shipped hooks.json default too (the early self-tune right-sizes from the
-# first run, so the default only needs a sane minimum, not a guess); CAP=600s
-# matches Claude Code's command-hook default ceiling. Past ~145 plugins the
-# formula saturates at CAP and the durable fix is cutting per-plugin spawn
-# cost (batch the node validation), not a bigger timeout. Effect is
-# next-session / after `/reload-plugins` (hooks.json is
-# cached at session start). Self-edit is JSON-validated and only applied on
-# a real change, so it never churns or corrupts the plugin's own config.
+# Constants are conservative (cover a slow HDD+Defender laptop); over-
+# provisioning a fast machine is harmless — the value is only a backstop.
+# Written EARLY (before the pipeline) so even a timed-out run has already
+# right-sized the next session; the self-edit is JSON-validated and applied
+# only on a real change. Effect is next-session / after `/reload-plugins`.
+# Full rationale (cost model, examples, cap-saturation): CLAUDE.md CASE-25.
 OWN_HOOKS="${PLUGIN_ROOT}/hooks/hooks.json"
 INSTALLED="${HOME:-$USERPROFILE}/.claude/plugins/installed_plugins.json"
 if [[ -f "$OWN_HOOKS" && -f "$INSTALLED" ]] && command -v node >/dev/null 2>&1; then

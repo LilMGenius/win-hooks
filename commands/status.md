@@ -52,7 +52,7 @@ This checks ALL installed plugins' hooks for:
 - **json_crlf**: CRLF line endings that can cause issues
 - **wrapper_missing**: Patched hook references a wrapper script that doesn't exist (`/win-hooks:fix` recreates it)
 - **wrapper_broken**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target (symptom: `bash: .../bash: No such file or directory`)
-- **cmd_missing**: Missing run-hook.cmd in _hooks/ directory
+- **cmd_missing**: Missing run-hook.cmd in _hooks/ directory (referenced by hooks.json)
 - **recursive_wrapper**: Bash wrapper (.py/.js) calls python3/node on itself
 - **python3_stub**: Hook uses bare python3/python that resolves to a Microsoft Store App Execution Alias stub (or is missing)
 - **backslash_path**: settings.json hook commands contain Windows backslash paths
@@ -73,17 +73,12 @@ Combine results from both verify and find-incompatible:
 | Plugin | Issue | Detail | Status |
 |--------|-------|--------|--------|
 
-Use these indicators:
-- **HEALTHY**: No issues found, hooks.json is valid and compatible
-- **INCOMPATIBLE**: Uses `.sh` scripts or missing binaries (from scanner)
-- **PATCHED**: Has a `.bak` file, meaning win-hooks has previously applied a fix
-- **BOM**: File has UTF-8 BOM — run `/win-hooks:fix` to repair
-- **CRLF**: hooks.json has CRLF line endings — run `/win-hooks:fix` to repair
-- **BROKEN**: hooks.json is invalid JSON — check `.bak` for recovery
-- **MISSING WRAPPER**: Patched hook references a wrapper that doesn't exist — run `/win-hooks:fix` to recreate
-- **BROKEN WRAPPER**: Wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target — run `/win-hooks:fix` to repair
-- **RECURSIVE**: Bash wrapper calls interpreter on itself — run `/win-hooks:fix` to disable
-- **PYTHON STUB**: Bare python3/python resolves to a Microsoft Store stub — run `/win-hooks:fix` to wrap with runtime resolution
+Use these status indicators (the verify issue types themselves are listed in Step 3):
+- **HEALTHY**: No issues found — hooks.json valid and compatible
+- **INCOMPATIBLE**: Uses `.sh` scripts or missing binaries (from the scanner — not yet patched)
+- **PATCHED**: Has a `.bak` file — win-hooks has already applied a fix
+
+For any verify issue type (Step 3), the remedy is `/win-hooks:fix`.
 
 To check for patched plugins:
 ```bash
@@ -94,5 +89,5 @@ find ~/.claude/plugins/cache -name "hooks.json.bak" 2>/dev/null
 
 If issues are found:
 - For BOM/CRLF/wrapper issues: suggest running `/win-hooks:fix` (auto-repairs with `verify --fix`)
-- For incompatible hooks: suggest `/reload-plugins` or restarting Claude Code (a fresh session re-runs the SessionStart auto-patch)
+- For incompatible hooks: prefer `/reload-plugins` (restart as fallback) — a fresh session re-runs the SessionStart auto-patch
 - For broken JSON with `.bak`: suggest restoring from backup and re-patching
