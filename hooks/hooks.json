@@ -1,5 +1,5 @@
 {
-  "description": "win-hooks: Auto-patches incompatible plugin hooks on Windows at session start",
+  "description": "win-hooks: Auto-patches Claude Code plugin hooks for Windows compatibility",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,16 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" patch-all",
             "timeout": 60000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" reheal"
           }
         ]
       }

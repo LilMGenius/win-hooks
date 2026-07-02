@@ -82,7 +82,7 @@ tail -n 5 ~/.claude/win-hooks/last-run.log
 
 ## Plugin Updates
 
-When a plugin updates, its install path changes and patches are lost. **This is by design.** Run `/reload-plugins` (or restart Claude Code) → win-hooks re-detects and re-patches automatically. Zero maintenance.
+Updating a plugin overwrites its hooks with fresh, un-patched ones. win-hooks re-patches automatically: at the next session start, **and mid-session on your very next prompt** after a `/plugin` update. Then `/reload-plugins` (or a new session) loads the repaired config. Zero manual fixing.
 
 ## Requirements
 

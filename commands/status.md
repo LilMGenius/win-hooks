@@ -27,7 +27,7 @@ Save the output path as PLUGIN_ROOT.
 
 ### Step 2: Show when the self-heal last ran (heartbeat)
 
-win-hooks records every SessionStart auto-patch run to a rotating heartbeat log. Read it to confirm the self-heal is actually firing each session:
+win-hooks records every self-heal run (SessionStart and mid-session `reheal`, CASE-26) to a rotating heartbeat log. Read it to confirm the self-heal is actually firing:
 
 ```bash
 tail -n 5 ~/.claude/win-hooks/last-run.log 2>/dev/null || echo "no heartbeat yet — self-heal has not run since upgrading to the heartbeat build (or never dispatched)"

@@ -1,0 +1,73 @@
+#!/bin/bash
+# win-hooks: reheal
+# Mid-session re-heal guard (CASE-26). Runs at UserPromptSubmit.
+#
+# SessionStart's patch-all heals once per session, but a mid-session plugin
+# update (a /plugin bump) reinstalls a plugin's hooks.json in its un-patched
+# form, overwriting win-hooks' patch (CASE-13). SessionStart has already fired,
+# so nothing re-heals until the next session or a manual /win-hooks:fix. This
+# guard closes that gap: each prompt it does a near-zero mtime check, and re-runs
+# patch-all only when a plugin's hooks changed since the last check AND an
+# incompatible command is actually present.
+#
+# State: a single stamp file marks "checked up to here". Comparing plugin
+# hooks.json mtimes against it keeps the hot path to a handful of stat calls
+# (no node, no per-plugin forks), so a normal prompt pays almost nothing.
+#
+# The re-patch lands on DISK; the running session already loaded the old config,
+# so /reload-plugins (or a new session) applies it (same caveat as CASE-13).
+#
+# Always exits 0 and never writes to stdout (a UserPromptSubmit hook's stdout is
+# injected into the model's context); notices go to stderr, like patch-all.
+
+set -uo pipefail
+
+# Windows only; hooks run natively on Unix/macOS (mirrors patch-all).
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) ;;
+  *) exit 0 ;;
+esac
+
+HOME_DIR="${HOME:-$USERPROFILE}"
+STATE_DIR="${HOME_DIR}/.claude/win-hooks"
+STAMP="${STATE_DIR}/reheal.stamp"
+INSTALLED="${HOME_DIR}/.claude/plugins/installed_plugins.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+[[ -f "$INSTALLED" ]] || exit 0
+
+# Installed plugins' hooks.json paths (v1/v2 installed_plugins.json to installPath;
+# same parse shape as find-incompatible). win-hooks is skipped, because patch-all
+# self-edits its own hooks.json timeout (CASE-25), which would otherwise trip the
+# check on every prompt.
+mapfile -t HOOKS < <(
+  sed '1s/^\xEF\xBB\xBF//' "$INSTALLED" 2>/dev/null \
+    | grep -oE '"installPath"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed -E 's/.*"installPath"[[:space:]]*:[[:space:]]*"//; s/"$//; s/[\\][\\]*/\//g' \
+    | while IFS= read -r p; do
+        [[ "$p" == *win-hooks* ]] && continue
+        [[ -f "${p}/hooks/hooks.json" ]] && printf '%s\n' "${p}/hooks/hooks.json"
+      done
+)
+[[ ${#HOOKS[@]} -eq 0 ]] && exit 0
+
+# Hot path: stamp exists and no plugin's hooks.json is newer than it, so nothing
+# changed since the last check; bail in a few stat calls.
+if [[ -f "$STAMP" ]] && [[ -z "$(find "${HOOKS[@]}" -newer "$STAMP" -print -quit 2>/dev/null)" ]]; then
+  exit 0
+fi
+
+# A hooks.json changed since the last check (or this is the first run). Re-patch
+# only if an incompatible command is actually present; a compatible update needs
+# no work.
+if [[ -n "$(bash "${SCRIPT_DIR}/../scripts/find-incompatible" 2>/dev/null)" ]]; then
+  bash "${SCRIPT_DIR}/patch-all" >&2 || true
+  echo "win-hooks: a plugin update overwrote a patch, so it was re-patched. Run /reload-plugins to apply it to this session." >&2
+fi
+
+# Mark "checked up to now" so unchanged prompts stay on the hot path. Written
+# LAST so it post-dates any hooks.json that patch-all just wrote.
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+: > "$STAMP" 2>/dev/null || true
+
+exit 0

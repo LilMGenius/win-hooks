@@ -80,7 +80,7 @@ This runs the full pipeline (scanner → patcher → settings.json fixers → `v
 
 ## Is the self-heal firing? (heartbeat)
 
-win-hooks runs at every SessionStart; after installing or updating a plugin, `/reload-plugins` (or a restart) re-runs it. (`/reload-plugins` reloads config from disk but does not re-fire SessionStart, so the patcher itself needs a new session — CASE-13.)
+win-hooks re-heals at every SessionStart and, mid-session, on the next prompt after a plugin's hooks change (the `reheal` guard, CASE-26). After the guard or `/win-hooks:fix` re-patches on disk, `/reload-plugins` (or a new session) loads the repaired config. (`/reload-plugins` reloads config but does not re-fire SessionStart, CASE-13.)
 
 If a plugin keeps reverting across sessions yet `patch-all` fixes it by hand, check the heartbeat:
 
@@ -98,4 +98,4 @@ tail -n 5 ~/.claude/win-hooks/last-run.log
 
 - **Still erroring after a fix:** confirm Git Bash at `C:\Program Files\Git\bin\bash.exe`, inspect the wrapper (`cat <plugin>/_hooks/<name>`), and run `claude --debug hooks` for execution detail.
 - **Only the Microsoft Store python3 stub is installed:** install a real Python from [python.org](https://www.python.org/) and restart.
-- **A plugin update reverted a fix:** expected — `/reload-plugins` or restart re-patches automatically.
+- **A plugin update reverted a fix:** expected. win-hooks re-patches on your next prompt (or next session); `/reload-plugins` then applies it (CASE-13/26).
