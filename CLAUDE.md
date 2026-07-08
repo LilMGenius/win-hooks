@@ -38,6 +38,12 @@ Every hook script win-hooks ships (`patch-all`, `reheal`) — and every wrapper 
 
 ---
 
+## Testing
+
+`bash test/run.sh` runs the synthetic-fixture suite (`test/fixtures/`): one fixture per CASE, each driven through the real `patch-all` → `verify` pipeline inside an isolated sandbox — a private `$HOME` **and** a private copy of `hooks/`+`scripts/`, so a test run never touches this repo's own `hooks/hooks.json` (which `patch-all` self-edits every run for its adaptive timeout, CASE-25). `test/lib/harness.sh` has the sandbox/assert helpers. Run it before committing a change to the scanner, patcher, or verifier.
+
+---
+
 ## Known Edge Cases & Scenarios
 
 All discovered Windows compatibility issues that win-hooks detects, fixes, or documents. Ordered by diagnostic priority — user-facing symptom categories first, internal machinery next. **CASE-NN numbers are stable IDs in discovery order (referenced across SKILL.md / status.md / git), so they are intentionally not sequential here.**

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" my-hook"
+          }
+        ]
+      }
+    ]
+  }
+}

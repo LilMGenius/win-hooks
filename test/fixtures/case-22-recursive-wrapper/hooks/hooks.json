@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd\" broken-hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}

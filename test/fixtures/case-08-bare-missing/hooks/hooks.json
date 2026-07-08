@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "wh-test-nonexistent-binary-xyz --check"
+          }
+        ]
+      }
+    ]
+  }
+}

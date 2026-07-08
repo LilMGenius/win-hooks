@@ -1,0 +1,4 @@
+# This fixture's hooks.json.bak is deliberate test data (the pre-patch
+# state recreate_missing_wrapper reads from), not a runtime backup artifact —
+# un-ignore it here rather than requiring `git add -f` at commit time.
+!hooks.json.bak
