@@ -34,21 +34,19 @@ STAMP="${STATE_DIR}/reheal.stamp"
 INSTALLED="${HOME_DIR}/.claude/plugins/installed_plugins.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Fail-safe to no-op (hot UserPromptSubmit path — never break a prompt over a
+# missing/corrupt shared lib): unlike the occasionally-invoked scripts, this
+# is not a "loud" failure worth surfacing.
+LIB="${SCRIPT_DIR}/../scripts/lib/plugins.sh"
+[[ -f "$LIB" ]] || exit 0
+source "$LIB" || exit 0
+
 [[ -f "$INSTALLED" ]] || exit 0
 
-# Installed plugins' hooks.json paths (v1/v2 installed_plugins.json to installPath;
-# same parse shape as find-incompatible). win-hooks is skipped, because patch-all
-# self-edits its own hooks.json timeout (CASE-25), which would otherwise trip the
-# check on every prompt.
-mapfile -t HOOKS < <(
-  sed '1s/^\xEF\xBB\xBF//' "$INSTALLED" 2>/dev/null \
-    | grep -oE '"installPath"[[:space:]]*:[[:space:]]*"[^"]*"' \
-    | sed -E 's/.*"installPath"[[:space:]]*:[[:space:]]*"//; s/"$//; s/[\\][\\]*/\//g' \
-    | while IFS= read -r p; do
-        [[ "$p" == *win-hooks* ]] && continue
-        [[ -f "${p}/hooks/hooks.json" ]] && printf '%s\n' "${p}/hooks/hooks.json"
-      done
-)
+# Installed plugins' hooks.json paths (win-hooks itself is skipped inside
+# wh_each_plugin_hooksjson, because patch-all self-edits its own hooks.json
+# timeout — CASE-25 — which would otherwise trip the check on every prompt).
+mapfile -t HOOKS < <(wh_each_plugin_hooksjson "$INSTALLED" | cut -f3)
 [[ ${#HOOKS[@]} -eq 0 ]] && exit 0
 
 # Hot path: stamp exists and no plugin's hooks.json is newer than it, so nothing

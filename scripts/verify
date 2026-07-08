@@ -38,6 +38,14 @@ set -uo pipefail
 FIX_MODE=false
 [[ "${1:-}" == "--fix" ]] && FIX_MODE=true
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB="${SCRIPT_DIR}/lib/plugins.sh"
+if [[ ! -f "$LIB" ]]; then
+  echo "win-hooks: shared lib not found: $LIB" >&2
+  exit 1
+fi
+source "$LIB"
+
 INSTALLED="${HOME}/.claude/plugins/installed_plugins.json"
 [[ ! -f "$INSTALLED" ]] && exit 0
 
@@ -50,59 +58,6 @@ add_issue() {
   local plugin="$1" path="$2" type="$3" detail="$4"
   printf '%s\t%s\t%s\t%s\n' "$plugin" "$path" "$type" "$detail" >> "$ISSUES_FILE"
   printf '%s\t%s\t%s\t%s\n' "$plugin" "$path" "$type" "$detail"
-}
-
-# Strip UTF-8 BOM (EF BB BF) if present.
-strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
-
-# Validate JSON using fallback chain: node (guaranteed) -> powershell -> skip.
-validate_json() {
-  local file="$1"
-  # node (guaranteed — Claude Code runs on Node.js)
-  if command -v node &>/dev/null; then
-    node -e "
-try {
-  const fs = require('fs');
-  let t = fs.readFileSync(process.argv[1],'utf8').replace(/^\uFEFF/,'');
-  JSON.parse(t);
-} catch(e) {
-  process.stderr.write(e.message);
-  process.exit(1);
-}
-" "$file" 2>&1
-    return $?
-  fi
-  # powershell (Windows built-in)
-  if command -v powershell.exe &>/dev/null; then
-    local ps_path
-    ps_path=$(cygpath -w "$file" 2>/dev/null || echo "$file")
-    powershell.exe -NoProfile -Command "
-try { Get-Content -Raw -Encoding UTF8 '$ps_path' | ConvertFrom-Json | Out-Null }
-catch { Write-Error \$_.Exception.Message; exit 1 }
-" 2>&1
-    return $?
-  fi
-  # No validator available
-  return 0
-}
-
-# Parse installed_plugins.json -> tab-separated: plugin_name\tinstall_path
-# Handles v2 format: {"version":2, "plugins":{"name@source":[{"installPath":...}]}}
-parse_plugins() {
-  strip_bom < "$INSTALLED" | awk '
-    /": \[/ {
-      sub(/^[[:space:]]*"/, "")
-      sub(/".*/, "")
-      plugin = $0
-      next
-    }
-    /"installPath"/ {
-      sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
-      sub(/".*/, "")
-      path = $0
-      if (plugin != "" && path != "") print plugin "\t" path
-    }
-  ' | sed 's/[\\][\\]*/\//g'
 }
 
 # ── Checks ─────────────────────────────────────────────────────────
@@ -157,26 +112,11 @@ check_crlf() {
 check_json_valid() {
   local plugin="$1" install_path="$2" hooks_file="$3"
   local err
-  err=$(validate_json "$hooks_file" 2>&1) || {
+  err=$(wh_validate_json "$hooks_file" 2>&1) || {
     add_issue "$plugin" "$install_path" "json_invalid" "$err"
     return 1
   }
   return 0
-}
-
-# Resolve a working Python to an absolute path via a functional probe (`-c ""`),
-# not a path heuristic — accepts a real Store/conda/python.org interpreter and
-# rejects a dead Microsoft Store alias stub. Empty if none works.
-resolve_python() {
-  local _py _p
-  for _py in python3 python py; do
-    command -v "$_py" >/dev/null 2>&1 || continue
-    "$_py" -c "" >/dev/null 2>&1 || continue
-    _p=$(command -v "$_py")
-    command -v cygpath >/dev/null 2>&1 && _p=$(cygpath -m "$_p" 2>/dev/null || printf '%s' "$_p")
-    [[ -f "$_p" ]] || { [[ -f "${_p}.exe" ]] && _p="${_p}.exe"; }
-    printf '%s' "$_p"; return 0
-  done
 }
 
 # Recreate a wrapper that hooks.json references but that is missing from _hooks/.
@@ -218,7 +158,7 @@ recreate_missing_wrapper() {
   relpath=$(printf '%s' "$rawcmd" | grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' | head -1 | sed 's|.*${CLAUDE_PLUGIN_ROOT}/||')
   interp=$(printf '%s' "$rawcmd" | sed -E 's/.*"command"[[:space:]]*:[[:space:]]*"//' | awk '{print $1}' | tr -d '\\"')
   if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
-    py=$(resolve_python)
+    py=$(wh_resolve_python)
     if [[ -n "$py" ]]; then
       printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$relpath" > "$target"
     else
@@ -336,11 +276,7 @@ check_python3_stub() {
 
 # ── Main scan ──────────────────────────────────────────────────────
 
-while IFS=$'\t' read -r plugin install_path; do
-  [[ "$plugin" == *"win-hooks"* ]] && continue
-  hooks_file="${install_path}/hooks/hooks.json"
-  [[ ! -f "$hooks_file" ]] && continue
-
+while IFS=$'\t' read -r plugin install_path hooks_file; do
   # Run checks (fix BOM/CRLF before JSON validation)
   check_bom "$plugin" "$install_path"
   check_crlf "$plugin" "$install_path" "$hooks_file"
@@ -350,7 +286,7 @@ while IFS=$'\t' read -r plugin install_path; do
   if check_json_valid "$plugin" "$install_path" "$hooks_file"; then
     check_wrappers "$plugin" "$install_path" "$hooks_file"
   fi
-done < <(parse_plugins)
+done < <(wh_each_plugin_hooksjson "$INSTALLED")
 
 # ── Check settings.json for backslash paths and bare commands ─────
 

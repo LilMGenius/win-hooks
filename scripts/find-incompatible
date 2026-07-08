@@ -7,11 +7,16 @@
 # The command field contains the value as it appears in the JSON file (with any
 # JSON escaping like \" intact), so apply-patches can do exact string matching.
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB="${SCRIPT_DIR}/lib/plugins.sh"
+if [[ ! -f "$LIB" ]]; then
+  echo "win-hooks: shared lib not found: $LIB" >&2
+  exit 1
+fi
+source "$LIB"
+
 INSTALLED="${HOME}/.claude/plugins/installed_plugins.json"
 [[ ! -f "$INSTALLED" ]] && exit 0
-
-# Strip UTF-8 BOM (EF BB BF) if present — common on Windows
-strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
 
 # Check if a hook command is incompatible with Windows.
 # Returns 0 (true) if incompatible, 1 (false) if compatible.
@@ -47,24 +52,6 @@ is_incompatible() {
   return 1
 }
 
-# Parse installed_plugins.json — output: plugin_name\tinstall_path
-parse_plugins() {
-  strip_bom < "$INSTALLED" | awk '
-    /": \[/ {
-      sub(/^[[:space:]]*"/, "")
-      sub(/".*/, "")
-      plugin = $0
-      next
-    }
-    /"installPath"/ {
-      sub(/.*"installPath"[[:space:]]*:[[:space:]]*"/, "")
-      sub(/".*/, "")
-      path = $0
-      if (plugin != "" && path != "") print plugin "\t" path
-    }
-  ' | sed 's/[\\][\\]*/\//g'
-}
-
 # Extract hook commands from a hooks.json file — output: event\tcommand
 extract_commands() {
   local hooks_file="$1"
@@ -80,15 +67,11 @@ extract_commands() {
       local cmd="${BASH_REMATCH[1]}"
       [[ -n "$current_event" && -n "$cmd" ]] && printf '%s\t%s\n' "$current_event" "$cmd"
     fi
-  done < <(strip_bom < "$hooks_file")
+  done < <(wh_strip_bom < "$hooks_file")
 }
 
 # Main: scan all plugins
-parse_plugins | while IFS=$'\t' read -r plugin install_path; do
-  [[ "$plugin" == *"win-hooks"* ]] && continue
-  hooks_file="${install_path}/hooks/hooks.json"
-  [[ ! -f "$hooks_file" ]] && continue
-
+wh_each_plugin_hooksjson "$INSTALLED" | while IFS=$'\t' read -r plugin install_path hooks_file; do
   extract_commands "$hooks_file" | while IFS=$'\t' read -r event cmd; do
     if is_incompatible "$cmd"; then
       printf '%s\t%s\t%s\t%s\t%s\n' "$plugin" "$install_path" "$hooks_file" "$event" "$cmd"

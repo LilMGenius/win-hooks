@@ -20,6 +20,24 @@
 
 ---
 
+## Conventions
+
+### Hook resilience
+
+Every hook script win-hooks ships (`patch-all`, `reheal`) — and every wrapper it generates — follows the same discipline, regardless of how likely the underlying failure is:
+
+1. **Fail-safe to no-op.** Bad input, a missing tool, a non-Windows platform, or a git/JSON error exits 0 and never bricks a session. `patch-all`/`reheal` case on `uname -s` and exit 0 off-Windows; `wh_resolve_python`/`wh_validate_json` (`scripts/lib/plugins.sh`) degrade gracefully instead of erroring when no interpreter/validator is available.
+   - **Exception:** a missing *shipped* file (e.g. `scripts/lib/plugins.sh`, `hooks/run-hook.cmd`) is an installation defect, not an environmental one — those fail loud (`exit 1` with a message to stderr) so a broken install is visible instead of silently doing nothing.
+2. **Do work once.** A hot path (`reheal`, on every `UserPromptSubmit`) stays near-free by stamping "checked up to here" and bailing in a handful of `stat` calls when nothing has changed (CASE-26).
+3. **Bounded work.** No unbounded loops or waits. `patch-all`'s adaptive SessionStart timeout (CASE-25) is a sized backstop, not a fixed guess.
+4. **Stay quiet.** Hooks never spam a session. `patch-all`/`reheal` write proof-of-run to a disk-only heartbeat/log, never stdout on the happy path — a `UserPromptSubmit` hook's stdout in particular is injected into the model's context, so `reheal` writes notices to stderr only.
+
+**Deliberate absence:** win-hooks has no context-pressure backoff. It patches files on disk, not conversation context, so there is nothing analogous to trim — don't "fix" this; it isn't a gap.
+
+**Shared logic (SSOT).** Plugin enumeration (`wh_parse_plugins`, `wh_each_plugin_hooksjson`), BOM stripping, Python resolution, and JSON validation live in `scripts/lib/plugins.sh`, sourced by `find-incompatible`, `verify`, `apply-patches`, and `reheal`. Extend the shared function instead of re-deriving the same awk/sed/probe in a fifth place.
+
+---
+
 ## Known Edge Cases & Scenarios
 
 All discovered Windows compatibility issues that win-hooks detects, fixes, or documents. Ordered by diagnostic priority — user-facing symptom categories first, internal machinery next. **CASE-NN numbers are stable IDs in discovery order (referenced across SKILL.md / status.md / git), so they are intentionally not sequential here.**
@@ -41,7 +59,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Root cause**: `find-incompatible` treated `python3 ${CLAUDE_PLUGIN_ROOT}/x.py` as compatible (deferring to the copy). The old copy never fired because `command -v python3` *succeeds* on the stub, and it produced an extensionless `python3` that cmd.exe (which dispatches hooks) can't execute. Worse, the copy is fundamentally unreliable: a system-wide Python (e.g. `C:\ProgramData\miniconda3`, `C:\Program Files\...`) is **not writable without admin**, so `cp` fails silently (`|| true`).
 - **Fix** (reliable path = wrap; copy = best-effort nicety):
   - `find-incompatible` flags bare `python3`/`python` `${CLAUDE_PLUGIN_ROOT}` commands **always** on Windows (not conditionally). The bare name may be a dead stub, and even when it works in Git Bash the cmd.exe that dispatches the hook may resolve a *different* (stub) python — routing through the bash wrapper normalizes this across all machines.
-  - `apply-patches` resolves a working Python **once at patch time** via a **functional probe** (`resolve_python`: try `python3`/`python`/`py`, accept the first where `"$py" -c ""` exits 0) and **bakes its absolute path** into the wrapper (`exec "<abs-python>" "$PLUGIN_ROOT/<script>" "$@"`). The probe is **location-independent** — it accepts any real Python (Store/conda/python.org/embedded, including a Store install under `WindowsApps/`) and rejects only the dead alias stub, which a `*/WindowsApps/*` path heuristic would instead wrongly disable. Probing once — not per invocation — keeps hot hooks like PreToolUse from paying a second Python startup. Graceful `exit 0` no-op if no Python works; writes only to the user-writable plugin cache, so no admin needed.
+  - `apply-patches` resolves a working Python **once at patch time** via a **functional probe** (`wh_resolve_python` in `scripts/lib/plugins.sh`: try `python3`/`python`/`py`, accept the first where `"$py" -c ""` exits 0) and **bakes its absolute path** into the wrapper (`exec "<abs-python>" "$PLUGIN_ROOT/<script>" "$@"`). The probe is **location-independent** — it accepts any real Python (Store/conda/python.org/embedded, including a Store install under `WindowsApps/`) and rejects only the dead alias stub, which a `*/WindowsApps/*` path heuristic would instead wrongly disable. Probing once — not per invocation — keeps hot hooks like PreToolUse from paying a second Python startup. Graceful `exit 0` no-op if no Python works; writes only to the user-writable plugin cache, so no admin needed.
   - `patch-all` still attempts a best-effort `python.exe` → `python3.exe`(+`python3`) copy, gated on the same functional probe, for bare `python3` that slips past the scanner. Best-effort only — fails on non-writable system dirs, which is why the wrapper is the real fix.
   - `fix-bare-commands` (settings.json) drops a non-functional python via the same probe (see CASE-23). `verify` reports `python3_stub` only when an unwrapped hook uses python and **no** working `python3`/`python`/`py` exists at all.
 - **Issue type**: `python3_stub`
@@ -109,7 +127,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Issue type**: `wrapper_broken`
 
 ### CASE-21: Python not installed
-- **Symptom**: `validate_json()` and `verify` fail if Python is the only JSON runtime.
+- **Symptom**: `wh_validate_json` (`scripts/lib/plugins.sh`) and `verify` fail if Python is the only JSON runtime.
 - **Fix**: Python dependency removed. Fallback chain: `node` (guaranteed) → `powershell.exe` (built-in) → skip. BOM/CRLF sanitization is pure bash.
 
 ---
@@ -154,7 +172,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 ### CASE-05: Patched JSON validation failure
 - **Symptom**: After patching, hooks.json is invalid JSON.
 - **Root cause**: awk `index()` text replacement can produce invalid JSON on partial matches.
-- **Fix**: `validate_json()` checks after each patch; auto-restores from `.bak` on failure.
+- **Fix**: `wh_validate_json` (`scripts/lib/plugins.sh`) checks after each patch; auto-restores from `.bak` on failure.
 
 ### CASE-06: installed_plugins.json v2 format
 - **Symptom**: Scanner finds zero plugins; all checks pass vacuously.
