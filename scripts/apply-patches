@@ -190,7 +190,11 @@ while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
   # One-time setup per plugin
   if [[ -z "${SETUP_DONE[$hooks_file]:-}" ]]; then
     mkdir -p "$scripts_dir"
-    [[ ! -f "${scripts_dir}/run-hook.cmd" ]] && cp "$TEMPLATE_CMD" "${scripts_dir}/run-hook.cmd"
+    # Always refresh from the current template (CASE-27) — run-hook.cmd is
+    # pure win-hooks-owned infrastructure, never user-edited, so a template
+    # fix (e.g. the WH_BASH_EXE override) reaches already-patched plugins on
+    # their next patch-all run instead of only new patches.
+    cp "$TEMPLATE_CMD" "${scripts_dir}/run-hook.cmd"
     [[ ! -f "${hooks_file}.bak" ]] && cp "$hooks_file" "${hooks_file}.bak"
     # Pre-sanitize: strip BOM/CRLF before any patching so awk works cleanly
     sanitize_file "$hooks_file"

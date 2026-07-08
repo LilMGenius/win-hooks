@@ -16,6 +16,15 @@ if "%~1"=="" (
 
 set "HOOK_DIR=%~dp0"
 
+REM Explicit override (CASE-27, studied against oh-my-openagent's
+REM NODE_REPL_NODE_PATH pattern): set once if bash lives somewhere
+REM run-hook.cmd doesn't already look, e.g. a portable/scoop/winget Git
+REM install. Skipped entirely unless set, so default behavior is unchanged.
+if defined WH_BASH_EXE if exist "%WH_BASH_EXE%" (
+    "%WH_BASH_EXE%" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
+    exit /b %ERRORLEVEL%
+)
+
 REM Try Git for Windows bash in standard locations
 if exist "C:\Program Files\Git\bin\bash.exe" (
     "C:\Program Files\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
