@@ -27,17 +27,27 @@ if [[ ! -f "$LIB" ]]; then
 fi
 source "$LIB"
 
+decode_json_command() {
+  printf '%s' "$1" | sed 's/\\"/"/g'
+}
+
+extract_rel_path() {
+  decode_json_command "$1" \
+    | sed -nE 's#.*"?\$(\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
+    | head -1
+}
+
 # Extract the script path token from a hook command.
 # For interpreter-prefixed commands (e.g. `bash ${CLAUDE_PLUGIN_ROOT}/x.sh`)
 # the path is NOT $1 (which is the interpreter) — pick the token containing
 # ${CLAUDE_PLUGIN_ROOT}; otherwise fall back to the first token.
 extract_path_part() {
-  local cmd="$1" p
-  p=$(printf '%s' "$cmd" | grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+' | head -1)
-  if [[ -n "$p" ]]; then
-    printf '%s' "$p"
+  local cmd="$1" rel
+  rel=$(extract_rel_path "$cmd")
+  if [[ -n "$rel" ]]; then
+    printf '${CLAUDE_PLUGIN_ROOT}/%s' "$rel"
   else
-    printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\"
+    decode_json_command "$cmd" | awk '{print $1}' | tr -d "\"'\\\\"
   fi
 }
 
@@ -53,11 +63,12 @@ get_wrapper_name() {
   fi
 
   # "${CLAUDE_PLUGIN_ROOT}/scripts/check_version.sh" -> "check-version"
-  local path_part
-  path_part=$(extract_path_part "$cmd")
-  if [[ "$path_part" == */* ]]; then
+  # "$CLAUDE_PLUGIN_ROOT"/scripts/check_version.sh -> "check-version"
+  local rel_path
+  rel_path=$(extract_rel_path "$cmd")
+  if [[ -n "$rel_path" ]]; then
     local base
-    base=$(basename "$path_part")
+    base=$(basename "$rel_path")
     base="${base%.*}"
     echo "${base//_/-}"
     return
@@ -65,7 +76,7 @@ get_wrapper_name() {
 
   # Bare command: "foo bar baz" -> "foo-bar-baz"
   local name
-  name=$(printf '%s' "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
   name=$(printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g')
   echo "${name:-hook-wrapper}"
 }
@@ -73,13 +84,12 @@ get_wrapper_name() {
 # Generate bash wrapper script content for an incompatible command.
 generate_wrapper() {
   local cmd="$1"
-  local path_part
-  path_part=$(extract_path_part "$cmd")
+  local shell_cmd rel_path
+  shell_cmd=$(decode_json_command "$cmd")
+  rel_path=$(extract_rel_path "$cmd")
 
   # .sh script via CLAUDE_PLUGIN_ROOT
-  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* && "$cmd" == *".sh"* ]]; then
-    local rel_path
-    rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
+  if [[ -n "$rel_path" && "$shell_cmd" == *".sh"* ]]; then
     printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel_path"
     return
   fi
@@ -93,12 +103,10 @@ generate_wrapper() {
   # startup. Graceful no-op if no working Python exists. Copying python.exe ->
   # python3.exe (CASE-09) can't be relied on — system installs like
   # C:\ProgramData aren't writable without admin — so the wrapper is the fix.
-  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
+  if [[ -n "$rel_path" ]]; then
     local interp
-    interp=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+    interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | tr -d "\"'\\\\")
     if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
-      local rel_path
-      rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
       if [[ -n "$PY_RESOLVED" ]]; then
         printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$PY_RESOLVED" "$rel_path"
       else
@@ -109,17 +117,15 @@ generate_wrapper() {
   fi
 
   # Non-.sh path via CLAUDE_PLUGIN_ROOT
-  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
-    local rel_path
-    rel_path=$(printf '%s' "$path_part" | sed 's|.*\${CLAUDE_PLUGIN_ROOT}/||')
+  if [[ -n "$rel_path" ]]; then
     printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel_path"
     return
   fi
 
   # Bare command with dependency check
   local dep
-  dep=$(printf '%s' "$cmd" | awk '{print $1}')
-  printf '#!/bin/bash\nif ! command -v "%s" &>/dev/null; then\n  exit 0\nfi\n%s\n' "$dep" "$cmd"
+  dep=$(printf '%s' "$shell_cmd" | awk '{print $1}')
+  printf '#!/bin/bash\nif ! command -v "%s" &>/dev/null; then\n  exit 0\nfi\n%s\n' "$dep" "$shell_cmd"
 }
 
 # Sanitize a file: strip UTF-8 BOM and normalize CRLF -> LF.
@@ -226,9 +232,10 @@ while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
   # Strip everything up to AND INCLUDING the script path token (which the
   # wrapper body already encodes), so an interpreter prefix or the path
   # itself is never re-appended as a bogus arg.
-  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
-    extra_args=$(printf '%s' "$cmd" \
-      | sed -E 's#.*\$\{CLAUDE_PLUGIN_ROOT\}/[A-Za-z0-9_./-]+##' \
+  rel_path=$(extract_rel_path "$cmd")
+  if [[ -n "$rel_path" ]]; then
+    extra_args=$(decode_json_command "$cmd" \
+      | sed -E 's#.*"?\$(\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT)"?/[A-Za-z0-9_./-]+##' \
       | sed -E 's/^[\"[:space:]]+//; s/[[:space:]]+$//')
     [[ -n "$extra_args" ]] && new_cmd="${new_cmd} ${extra_args}"
   fi

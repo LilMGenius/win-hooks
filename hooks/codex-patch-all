@@ -1,0 +1,75 @@
+#!/bin/bash
+# win-hooks: codex-patch-all
+# Scans installed Codex plugins and adds Windows-specific commandWindows
+# wrappers for hook commands that assume Unix dispatch.
+
+set -euo pipefail
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT) ;;
+  *) exit 0 ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TEMPLATE_CMD="${PLUGIN_ROOT}/hooks/run-hook.cmd"
+SCRIPTS_DIR="${PLUGIN_ROOT}/scripts"
+HOME_DIR="${HOME:-$USERPROFILE}"
+STATE_DIR="${HOME_DIR}/.codex/win-hooks"
+LOG_FILE="${STATE_DIR}/last-run.log"
+STAMP="${STATE_DIR}/codex.stamp"
+PHASE="start"
+PATCHED=0
+VERIFY="skipped"
+T0=$(date +%s)
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+beat() {
+  local code=$? now
+  now=$(date +%s)
+  {
+    printf '%s\tphase=%s\texit=%d\tdur=%ss\tpatched=%s\tverify=%s\n' \
+      "$(date '+%Y-%m-%dT%H:%M:%S')" "$PHASE" "$code" "$(( now - ${T0:-now} ))" \
+      "${PATCHED:-0}" "${VERIFY:-?}" >> "$LOG_FILE"
+    tail -n 50 "$LOG_FILE" > "${LOG_FILE}.tmp" 2>/dev/null && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+  } 2>/dev/null || true
+}
+trap beat EXIT
+
+printf '%s\tphase=start\texit=-\tdur=-\tpatched=-\tverify=-\n' \
+  "$(date '+%Y-%m-%dT%H:%M:%S')" >> "$LOG_FILE" 2>/dev/null || true
+
+if [[ "${1:-}" == "--changed-only" && -f "$STAMP" ]]; then
+  if [[ -z "$(bash "${SCRIPTS_DIR}/codex-find-incompatible" --newer "$STAMP" 2>/dev/null)" ]]; then
+    PHASE="done"
+    : > "$STAMP" 2>/dev/null || true
+    exit 0
+  fi
+fi
+
+PHASE="pipeline"
+RESULT=$(bash "${SCRIPTS_DIR}/codex-find-incompatible" \
+  | bash "${SCRIPTS_DIR}/codex-apply-patches" "$TEMPLATE_CMD" 2>&1) || {
+  echo "win-hooks: Codex patch pipeline failed" >&2
+  echo "$RESULT" >&2
+  exit 1
+}
+
+if echo "$RESULT" | grep -q "^PATCHED:"; then
+  PATCHED=$(echo "$RESULT" | grep -c "^PATCHED:")
+  echo "win-hooks: patched $PATCHED Codex plugin(s)" >&2
+fi
+
+PHASE="verify"
+VERIFY_RC=0
+VERIFY_OUT=$(bash "${SCRIPTS_DIR}/codex-verify" --fix 2>&1) || VERIFY_RC=$?
+VERIFY=$(printf '%s\n' "$VERIFY_OUT" | grep "^win-hooks codex verify:" | tail -n1 | sed 's/^win-hooks codex verify: //') || true
+VERIFY="${VERIFY:-rc=$VERIFY_RC}"
+if [[ $VERIFY_RC -ne 0 ]]; then
+  echo "win-hooks: Codex verify found issues (auto-fixed where possible)" >&2
+  printf '%s\n' "$VERIFY_OUT" | grep -v "^win-hooks codex verify:" >&2
+fi
+
+: > "$STAMP" 2>/dev/null || true
+PHASE="done"

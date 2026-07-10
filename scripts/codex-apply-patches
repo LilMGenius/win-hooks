@@ -1,0 +1,107 @@
+#!/bin/bash
+# win-hooks: codex-apply-patches
+# Reads rows from codex-find-incompatible and adds commandWindows wrappers.
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: codex-apply-patches <template_cmd_path>" >&2
+  exit 1
+fi
+
+TEMPLATE_CMD="$1"
+[[ -f "$TEMPLATE_CMD" ]] || { echo "Template not found: $TEMPLATE_CMD" >&2; exit 1; }
+
+decode_json_command() {
+  printf '%s' "$1" | sed 's/\\"/"/g'
+}
+
+extract_rel_path() {
+  decode_json_command "$1" \
+    | sed -nE 's#.*"?\$(\{PLUGIN_ROOT\}|PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
+    | head -1
+}
+
+wrapper_name_for() {
+  local cmd="$1" rel base name
+  rel=$(extract_rel_path "$cmd")
+  if [[ -n "$rel" ]]; then
+    base=$(basename "$rel")
+    base="${base%.*}"
+    printf '%s' "${base//_/-}" | sed 's/[^a-zA-Z0-9-]//g'
+    return
+  fi
+  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g'
+}
+
+generate_wrapper() {
+  local cmd="$1" shell_cmd rel interp dep
+  shell_cmd=$(decode_json_command "$cmd")
+  rel=$(extract_rel_path "$cmd")
+  if [[ -n "$rel" ]]; then
+    interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+    if [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
+      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+    else
+      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+    fi
+    return
+  fi
+  dep=$(printf '%s' "$shell_cmd" | awk '{print $1}')
+  printf '#!/bin/bash\nif ! command -v "%s" >/dev/null 2>&1; then\n  exit 0\nfi\nexec %s "$@"\n' "$dep" "$shell_cmd"
+}
+
+patch_hooks_json() {
+  local hooks_file="$1" event="$2" group_index="$3" hook_index="$4" command_windows="$5"
+  export WH_EVENT="$event" WH_GROUP_INDEX="$group_index" WH_HOOK_INDEX="$hook_index" WH_COMMAND_WINDOWS="$command_windows"
+  node - "$hooks_file" <<'JSEOF'
+const fs = require('fs');
+const file = process.argv[2];
+const event = process.env.WH_EVENT;
+const groupIndex = Number(process.env.WH_GROUP_INDEX);
+const hookIndex = Number(process.env.WH_HOOK_INDEX);
+const commandWindows = process.env.WH_COMMAND_WINDOWS;
+const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+const data = JSON.parse(raw);
+const hook = data.hooks?.[event]?.[groupIndex]?.hooks?.[hookIndex];
+if (!hook || hook.type !== 'command') {
+  process.stderr.write(`win-hooks: hook index not found in ${file}\n`);
+  process.exit(1);
+}
+if (!hook.commandWindows) hook.commandWindows = commandWindows;
+fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+JSEOF
+  unset WH_EVENT WH_GROUP_INDEX WH_HOOK_INDEX WH_COMMAND_WINDOWS
+}
+
+declare -A SETUP_DONE
+declare -A PATCHED
+patched_count=0
+
+while IFS=$'\t' read -r plugin install_path hooks_file event group_index hook_index cmd; do
+  [[ -z "${plugin:-}" ]] && continue
+  hooks_dir="${install_path}/_codex_hooks"
+  if [[ -z "${SETUP_DONE[$hooks_file]:-}" ]]; then
+    mkdir -p "$hooks_dir"
+    [[ ! -f "${hooks_dir}/run-hook.cmd" ]] && cp "$TEMPLATE_CMD" "${hooks_dir}/run-hook.cmd"
+    [[ ! -f "${hooks_file}.codex-win-hooks.bak" ]] && cp "$hooks_file" "${hooks_file}.codex-win-hooks.bak"
+    SETUP_DONE[$hooks_file]=1
+  fi
+
+  wrapper=$(wrapper_name_for "$cmd")
+  wrapper="${wrapper:-codex-hook-wrapper}"
+  wrapper_path="${hooks_dir}/${wrapper}"
+  generate_wrapper "$cmd" > "$wrapper_path"
+
+  command_windows="\"\${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd\" ${wrapper}"
+  patch_hooks_json "$hooks_file" "$event" "$group_index" "$hook_index" "$command_windows"
+
+  if [[ -z "${PATCHED[$plugin]:-}" ]]; then
+    PATCHED[$plugin]=1
+    patched_count=$((patched_count + 1))
+    echo "PATCHED: $plugin" >&2
+  fi
+done
+
+echo "patched: $patched_count"

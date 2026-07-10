@@ -1,0 +1,431 @@
+#!/bin/bash
+# win-hooks: codex-verify
+# Post-patch health check for installed Codex plugin hooks.
+# Detects: invalid JSON, BOM, CRLF, missing commandWindows wrappers,
+# missing wrapper files, broken wrapper bodies, recursive wrappers, and
+# bare Python hooks that may fail under Windows hook dispatch.
+
+set -uo pipefail
+
+FIX_MODE=false
+[[ "${1:-}" == "--fix" ]] && FIX_MODE=true
+
+ISSUES=$(mktemp)
+trap 'rm -f "$ISSUES"' EXIT
+
+add_issue() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$ISSUES"
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
+}
+
+strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
+
+validate_json() {
+  local file="$1"
+  node -e "
+try {
+  const fs = require('fs');
+  const text = fs.readFileSync(process.argv[1], 'utf8').replace(/^\uFEFF/, '');
+  JSON.parse(text);
+} catch (error) {
+  process.stderr.write(error.message);
+  process.exit(1);
+}
+" "$file" 2>&1
+  return $?
+}
+
+if ! command -v codex >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+  echo "win-hooks codex verify: skipped"
+  exit 0
+fi
+
+PLUGIN_LIST=$(codex plugin list --json 2>/dev/null) || { echo "win-hooks codex verify: skipped"; exit 0; }
+export PLUGIN_LIST
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCANNER="${SCRIPT_DIR}/codex-find-incompatible"
+APPLIER="${SCRIPT_DIR}/codex-apply-patches"
+TEMPLATE_CMD="${PLUGIN_ROOT}/hooks/run-hook.cmd"
+
+list_codex_plugins() {
+  node <<'JSEOF'
+const fs = require('fs');
+const path = require('path');
+const list = JSON.parse(process.env.PLUGIN_LIST || '{}');
+function normalize(p) {
+  return String(p || '').replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
+}
+for (const plugin of list.installed || []) {
+  if (!plugin.installed || !plugin.enabled) continue;
+  const pluginId = plugin.pluginId || `${plugin.name || 'unknown'}@${plugin.marketplaceName || 'unknown'}`;
+  if (/^(win-hooks|codex-win-hooks)@/.test(pluginId) || plugin.name === 'win-hooks') continue;
+  const installPath = normalize(plugin.source && plugin.source.path);
+  if (!installPath) continue;
+  const manifest = path.join(installPath, '.codex-plugin', 'plugin.json');
+  if (!fs.existsSync(manifest)) continue;
+  let meta;
+  try {
+    meta = JSON.parse(fs.readFileSync(manifest, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    continue;
+  }
+  if (!meta.hooks) continue;
+  const hooksFile = normalize(path.resolve(installPath, meta.hooks));
+  console.log([pluginId, installPath, hooksFile].join('\t'));
+}
+JSEOF
+}
+
+resolve_python() {
+  local py path
+  for py in python3 python py; do
+    command -v "$py" >/dev/null 2>&1 || continue
+    "$py" -c "" >/dev/null 2>&1 || continue
+    path=$(command -v "$py")
+    command -v cygpath >/dev/null 2>&1 && path=$(cygpath -m "$path" 2>/dev/null || printf '%s' "$path")
+    [[ -f "$path" ]] || { [[ -f "${path}.exe" ]] && path="${path}.exe"; }
+    printf '%s' "$path"
+    return 0
+  done
+}
+
+decode_json_command() {
+  printf '%s' "$1" | sed 's/\\"/"/g'
+}
+
+extract_rel_path() {
+  decode_json_command "$1" \
+    | sed -nE 's#.*"?\$(\{PLUGIN_ROOT\}|PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
+    | head -1
+}
+
+wrapper_name_for() {
+  local cmd="$1" rel base name
+  rel=$(extract_rel_path "$cmd")
+  if [[ -n "$rel" ]]; then
+    base=$(basename "$rel")
+    base="${base%.*}"
+    printf '%s' "${base//_/-}" | sed 's/[^a-zA-Z0-9-]//g'
+    return
+  fi
+  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g'
+}
+
+create_wrapper_body() {
+  local cmd="$1" rel interp py shell_cmd
+  shell_cmd=$(decode_json_command "$cmd")
+  rel=$(extract_rel_path "$cmd")
+  if [[ -z "$rel" ]]; then
+    printf '#!/bin/bash\n# win-hooks: recreated fallback wrapper\nexec bash "$@"\n'
+    return
+  fi
+
+  interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | sed "s/[\"'\\\\]//g")
+  if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
+    py=$(resolve_python)
+    if [[ -n "$py" ]]; then
+      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$rel"
+    else
+      printf '#!/bin/bash\n# win-hooks: no working Python found; graceful no-op\nexit 0\n'
+    fi
+  elif [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+  else
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+  fi
+}
+
+backup_command_for_wrapper() {
+  local bak="$1" wrapper="$2"
+  node - "$bak" "$wrapper" <<'JSEOF'
+const fs = require('fs');
+const path = require('path');
+const file = process.argv[2];
+const wanted = process.argv[3];
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+} catch {
+  process.exit(0);
+}
+function extractRel(cmd) {
+  const text = String(cmd || '').replace(/\\"/g, '"');
+  const match = text.match(/"?\$(?:\{PLUGIN_ROOT\}|PLUGIN_ROOT)"?\/([A-Za-z0-9_./-]+)/);
+  return match ? match[1] : '';
+}
+function wrapperName(cmd) {
+  const rel = extractRel(cmd);
+  if (rel) {
+    return path.basename(rel).replace(/\.[^.]*$/, '').replace(/_/g, '-').replace(/[^a-zA-Z0-9-]/g, '');
+  }
+  return String(cmd || '').replace(/\\"/g, '"').trim().split(/\s+/).slice(0, 3).join('-').replace(/[^a-zA-Z0-9-]/g, '');
+}
+for (const groups of Object.values(data.hooks || {})) {
+  if (!Array.isArray(groups)) continue;
+  for (const group of groups) {
+    const hooks = Array.isArray(group && group.hooks) ? group.hooks : [];
+    for (const hook of hooks) {
+      if (!hook || hook.type !== 'command') continue;
+      if (wrapperName(hook.command || '') === wanted) {
+        console.log(hook.command || '');
+        process.exit(0);
+      }
+    }
+  }
+}
+JSEOF
+}
+
+recreate_missing_wrapper() {
+  local install_path="$1" hooks_file="$2" wrapper="$3" rest="$4"
+  local hooks_dir="${install_path}/_codex_hooks"
+  local target="${hooks_dir}/${wrapper}"
+  local bak="${hooks_file}.codex-win-hooks.bak" rawcmd=""
+
+  mkdir -p "$hooks_dir" 2>/dev/null || true
+
+  if printf '%s' "$rest" | grep -q 'PLUGIN_ROOT'; then
+    printf '#!/bin/bash\n# win-hooks: recreated; exec the real target passed by run-hook.cmd\nexec bash "$@"\n' > "$target"
+    echo "  FIXED: recreated missing wrapper _codex_hooks/${wrapper} (passthrough)" >&2
+    return 0
+  fi
+
+  if [[ ! -f "$bak" ]]; then
+    echo "  WARN: cannot recreate _codex_hooks/${wrapper}; no ${bak}" >&2
+    return 1
+  fi
+
+  rawcmd=$(backup_command_for_wrapper "$bak" "$wrapper" | head -1)
+
+  if [[ -z "$rawcmd" ]]; then
+    echo "  WARN: cannot map _codex_hooks/${wrapper} to ${bak}" >&2
+    return 1
+  fi
+
+  create_wrapper_body "$rawcmd" > "$target"
+  echo "  FIXED: recreated missing wrapper _codex_hooks/${wrapper} (from backup)" >&2
+}
+
+check_bom() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local hooks_parent f bom rel
+  hooks_parent="$(dirname "$hooks_file")"
+  {
+    for dir in "$hooks_parent" "${install_path}/_codex_hooks"; do
+      [[ -d "$dir" ]] || continue
+      find "$dir" -maxdepth 1 -type f 2>/dev/null
+    done
+    if [[ -f "$hooks_file" ]]; then
+      grep -oE '(\$\{PLUGIN_ROOT\}|\$PLUGIN_ROOT)/[A-Za-z0-9_./-]+' "$hooks_file" 2>/dev/null \
+        | sed -E "s#^(\\$\\{PLUGIN_ROOT\\}|\\$PLUGIN_ROOT)/#${install_path}/#"
+    fi
+  } | sort -u | while IFS= read -r f; do
+    [[ -z "$f" || ! -f "$f" ]] && continue
+    case "$f" in *.codex-win-hooks.bak|*.tmp) continue ;; esac
+    bom=$(od -A n -t x1 -N 3 "$f" 2>/dev/null | tr -d ' \n')
+    [[ "$bom" != "efbbbf" ]] && continue
+    rel="${f#$install_path/}"
+    add_issue "$plugin" "$install_path" "bom" "$rel"
+    if $FIX_MODE; then
+      tail -c +4 "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
+      echo "  FIXED: stripped BOM from $rel" >&2
+    fi
+  done
+}
+
+check_crlf() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  [[ -f "$hooks_file" ]] || return 0
+  if od -c "$hooks_file" 2>/dev/null | grep -q '\\r  \\n'; then
+    add_issue "$plugin" "$install_path" "json_crlf" "CRLF line endings detected"
+    if $FIX_MODE; then
+      sed -i 's/\r$//' "$hooks_file" 2>/dev/null || {
+        sed 's/\r$//' "$hooks_file" > "${hooks_file}.tmp" && mv "${hooks_file}.tmp" "$hooks_file"
+      }
+      echo "  FIXED: normalized CRLF in $hooks_file" >&2
+    fi
+  fi
+}
+
+check_json_valid() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local err
+  [[ -f "$hooks_file" ]] || return 1
+  err=$(validate_json "$hooks_file" 2>&1) || {
+    add_issue "$plugin" "$install_path" "json_invalid" "$err"
+    return 1
+  }
+  return 0
+}
+
+check_recursive_wrapper() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local hooks_parent dir f first_line base
+  hooks_parent="$(dirname "$hooks_file")"
+  for dir in "$hooks_parent" "${install_path}/_codex_hooks"; do
+    [[ -d "$dir" ]] || continue
+    for f in "$dir"/*; do
+      [[ -f "$f" ]] || continue
+      [[ "$(basename "$f")" == "run-hook.cmd" ]] && continue
+      first_line=$(head -c 64 "$f" | tr -d '\r' | strip_bom | head -1)
+      [[ "$first_line" != "#!/bin/bash"* && "$first_line" != "#!/usr/bin/env bash"* ]] && continue
+      base=$(basename "$f")
+      if grep -qE "(python3?|node)[[:space:]].*${base}" "$f" 2>/dev/null; then
+        add_issue "$plugin" "$install_path" "recursive_wrapper" "${base} calls interpreter on itself"
+        if $FIX_MODE; then
+          printf '#!/bin/bash\n# win-hooks: disabled; bash wrapper called interpreter on itself\nexit 0\n' > "$f"
+          echo "  FIXED: disabled recursive wrapper ${base}" >&2
+        fi
+      fi
+    done
+  done
+}
+
+check_wrapper_bodies() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local dir="${install_path}/_codex_hooks"
+  local f base rel first_segment
+  [[ -d "$dir" ]] || return 0
+
+  for f in "$dir"/*; do
+    [[ -f "$f" ]] || continue
+    base=$(basename "$f")
+    [[ "$base" == "run-hook.cmd" ]] && continue
+
+    rel=$(sed -nE 's#.*\\"\$PLUGIN_ROOT\\"/([A-Za-z0-9_./-]+).*#\1#p' "$f" 2>/dev/null | head -1)
+    if [[ -n "$rel" ]]; then
+      add_issue "$plugin" "$install_path" "wrapper_broken" "_codex_hooks/${base} contains literal escaped quotes around PLUGIN_ROOT"
+      if $FIX_MODE; then
+        if [[ "$rel" == *.sh ]]; then
+          printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel" > "$f"
+        else
+          printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel" > "$f"
+        fi
+        echo "  FIXED: repaired escaped-quote wrapper _codex_hooks/${base}" >&2
+      fi
+      continue
+    fi
+
+    rel=$(sed -nE 's#.*"\$PLUGIN_ROOT/([A-Za-z0-9_./-]+)".*#\1#p' "$f" 2>/dev/null | head -1)
+    first_segment="${rel%%/*}"
+    if [[ -n "$rel" ]] && { [[ "$first_segment" =~ ^(bash|sh|python3?|node|npx|npm)$ ]] || [[ ! -e "${install_path}/${rel}" ]]; }; then
+      add_issue "$plugin" "$install_path" "wrapper_broken" "_codex_hooks/${base} execs invalid \$PLUGIN_ROOT/${rel}"
+      if $FIX_MODE; then
+        recreate_missing_wrapper "$install_path" "$hooks_file" "$base" ""
+      fi
+    fi
+  done
+}
+
+check_python_stub() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local py
+  node - "$hooks_file" <<'JSEOF' | grep -q '^python$' || return 0
+const fs = require('fs');
+const file = process.argv[2];
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+} catch {
+  process.exit(0);
+}
+for (const groups of Object.values(data.hooks || {})) {
+  if (!Array.isArray(groups)) continue;
+  for (const group of groups) {
+    const hooks = Array.isArray(group && group.hooks) ? group.hooks : [];
+    for (const hook of hooks) {
+      if (!hook || hook.type !== 'command' || hook.commandWindows) continue;
+      if (/^python3?\s/.test(String(hook.command || '').trim())) {
+        console.log('python');
+      }
+    }
+  }
+}
+JSEOF
+  for py in python3 python py; do
+    command -v "$py" >/dev/null 2>&1 && "$py" -c "" >/dev/null 2>&1 && return 0
+  done
+  add_issue "$plugin" "$install_path" "python3_stub" "hook uses python but no working python3/python/py is available"
+}
+
+check_wrappers() {
+  local plugin="$1" install_path="$2" hooks_file="$3"
+  local hooks_dir="${install_path}/_codex_hooks"
+  local wrapper rest
+  node - "$hooks_file" <<'JSEOF' | while IFS=$'\t' read -r wrapper rest; do
+const fs = require('fs');
+const file = process.argv[2];
+const data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+for (const groups of Object.values(data.hooks || {})) {
+  if (!Array.isArray(groups)) continue;
+  for (const group of groups) {
+    const hooks = Array.isArray(group && group.hooks) ? group.hooks : [];
+    for (const hook of hooks) {
+      const cw = String(hook && hook.commandWindows || '');
+      const normalized = cw.replace(/\\/g, '/');
+      if (!normalized.includes('_codex_hooks') || !/run-hook\.cmd/i.test(normalized)) continue;
+      const rest = normalized.replace(/^.*run-hook\.cmd["']?\s*/i, '');
+      const match = rest.match(/^["']?([^"'\s]+)/);
+      console.log([match ? match[1] : '', rest].join('\t'));
+    }
+  }
+}
+JSEOF
+    if [[ ! -f "${hooks_dir}/run-hook.cmd" ]]; then
+      add_issue "$plugin" "$install_path" "cmd_missing" "_codex_hooks/run-hook.cmd not found"
+      if $FIX_MODE && [[ -f "$TEMPLATE_CMD" ]]; then
+        mkdir -p "$hooks_dir" 2>/dev/null || true
+        cp "$TEMPLATE_CMD" "${hooks_dir}/run-hook.cmd"
+        echo "  FIXED: restored _codex_hooks/run-hook.cmd" >&2
+      fi
+    fi
+    if [[ -z "$wrapper" ]]; then
+      add_issue "$plugin" "$install_path" "wrapper_missing" "commandWindows wrapper name not parseable"
+      continue
+    fi
+    if [[ ! -f "${hooks_dir}/${wrapper}" ]]; then
+      add_issue "$plugin" "$install_path" "wrapper_missing" "_codex_hooks/${wrapper} not found"
+      if $FIX_MODE; then
+        recreate_missing_wrapper "$install_path" "$hooks_file" "$wrapper" "$rest"
+      fi
+    fi
+  done
+}
+
+if [[ -f "$SCANNER" ]]; then
+  if $FIX_MODE && [[ -f "$APPLIER" && -f "$TEMPLATE_CMD" ]]; then
+    scan_out=$(bash "$SCANNER" 2>/dev/null || true)
+    if [[ -n "$scan_out" ]]; then
+      printf '%s\n' "$scan_out" | bash "$APPLIER" "$TEMPLATE_CMD" >&2 || true
+    fi
+  fi
+  while IFS=$'\t' read -r plugin install_path hooks_file event group_index hook_index cmd; do
+    [[ -z "${plugin:-}" ]] && continue
+    add_issue "$plugin" "$install_path" "incompatible" "${event}[${group_index}].hooks[${hook_index}] lacks commandWindows: ${cmd}"
+  done < <(bash "$SCANNER" 2>/dev/null || true)
+fi
+
+while IFS=$'\t' read -r plugin install_path hooks_file; do
+  [[ -z "${plugin:-}" ]] && continue
+  [[ -f "$hooks_file" ]] || continue
+
+  check_bom "$plugin" "$install_path" "$hooks_file"
+  check_crlf "$plugin" "$install_path" "$hooks_file"
+  check_recursive_wrapper "$plugin" "$install_path" "$hooks_file"
+  check_wrapper_bodies "$plugin" "$install_path" "$hooks_file"
+  check_python_stub "$plugin" "$install_path" "$hooks_file"
+  if check_json_valid "$plugin" "$install_path" "$hooks_file"; then
+    check_wrappers "$plugin" "$install_path" "$hooks_file"
+  fi
+done < <(list_codex_plugins)
+
+count=$(wc -l < "$ISSUES" | tr -d ' ')
+if [[ "$count" == "0" ]]; then
+  echo "win-hooks codex verify: all Codex plugins healthy" >&2
+  exit 0
+fi
+echo "win-hooks codex verify: ${count} issue(s) found" >&2
+exit "$(( count > 125 ? 125 : count ))"

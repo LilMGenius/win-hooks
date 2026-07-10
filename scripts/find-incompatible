@@ -22,15 +22,17 @@ INSTALLED="${HOME}/.claude/plugins/installed_plugins.json"
 # Returns 0 (true) if incompatible, 1 (false) if compatible.
 is_incompatible() {
   local cmd="$1"
+  local shell_cmd
+  shell_cmd=$(printf '%s' "$cmd" | sed 's/\\"/"/g')
   [[ -z "$cmd" ]] && return 1
   # Already uses .cmd wrapper
   [[ "$cmd" == *".cmd"* ]] && return 1
   # Direct .sh call
-  [[ "$cmd" == *".sh"* ]] && return 0
+  [[ "$shell_cmd" == *".sh"* ]] && return 0
   # CLAUDE_PLUGIN_ROOT path
-  if [[ "$cmd" == *'${CLAUDE_PLUGIN_ROOT}'* ]]; then
+  if [[ "$shell_cmd" == *'${CLAUDE_PLUGIN_ROOT}'* || "$shell_cmd" == *'$CLAUDE_PLUGIN_ROOT'* ]]; then
     local first_word
-    first_word=$(printf '%s' "$cmd" | awk '{print $1}' | tr -d "\"'\\\\")
+    first_word=$(printf '%s' "$shell_cmd" | awk '{print $1}' | tr -d "\"'\\\\")
     case "$first_word" in
       # python3/python prefix: ALWAYS wrap on Windows. The bare interpreter may
       # be a dead Microsoft Store stub, and even when it works in Git Bash the
@@ -40,12 +42,12 @@ is_incompatible() {
       python3|python) return 0 ;;
       node|npx|npm) return 1 ;;
     esac
-    [[ "$cmd" == *".py"* ]] && return 1
+    [[ "$shell_cmd" == *".py"* ]] && return 1
     return 0
   fi
   # Bare command — check if binary exists on PATH
   local first_word
-  first_word=$(printf '%s' "$cmd" | awk '{print $1}')
+  first_word=$(printf '%s' "$shell_cmd" | awk '{print $1}')
   if [[ "$first_word" != *"/"* && "$first_word" != *'$'* && "$first_word" != *"\\"* ]]; then
     command -v "$first_word" &>/dev/null || return 0
   fi

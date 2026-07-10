@@ -1,0 +1,31 @@
+{
+  "description": "win-hooks: Auto-patches Codex plugin hooks for Windows compatibility",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/codex-patch-all\"",
+            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" codex-patch-all",
+            "timeout": 60,
+            "statusMessage": "win-hooks: Checking Codex plugin hooks"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/codex-patch-all\" --changed-only",
+            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" codex-patch-all --changed-only",
+            "timeout": 20,
+            "statusMessage": "win-hooks: Checking changed Codex plugin hooks"
+          }
+        ]
+      }
+    ]
+  }
+}

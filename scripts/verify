@@ -236,11 +236,28 @@ check_wrapper_bodies() {
   local plugin="$1" install_path="$2"
   local dir="${install_path}/_hooks"
   [[ -d "$dir" ]] || return 0
-  local f base seg
+  local f base seg rel
   for f in "$dir"/*; do
     [[ -f "$f" ]] || continue
     base=$(basename "$f")
     [[ "$base" == "run-hook.cmd" ]] && continue
+    # Broken wrapper from JSON-escaped quote leakage:
+    #   bash \"$CLAUDE_PLUGIN_ROOT\"/hooks/x.sh
+    # The backslashes make the quotes literal, so bash tries to open a path
+    # containing quote characters. Regenerate it as the normal path-baked body.
+    rel=$(sed -nE 's#.*\\"\$CLAUDE_PLUGIN_ROOT\\"/([A-Za-z0-9_./-]+).*#\1#p' "$f" 2>/dev/null | head -1)
+    if [[ -n "$rel" ]]; then
+      add_issue "$plugin" "$install_path" "wrapper_broken" "_hooks/${base} contains literal escaped quotes around CLAUDE_PLUGIN_ROOT"
+      if $FIX_MODE; then
+        if [[ "$rel" == *.sh ]]; then
+          printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel" > "$f"
+        else
+          printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel" > "$f"
+        fi
+        echo "  FIXED: repaired escaped-quote wrapper _hooks/${base}" >&2
+      fi
+      continue
+    fi
     # Bogus target = a single path segment (no slash) right after $PLUGIN_ROOT/.
     seg=$(grep -oE 'exec ([^ "]+ )?"\$PLUGIN_ROOT/[^"/]+"' "$f" 2>/dev/null | head -1 \
       | sed -E 's#.*\$PLUGIN_ROOT/([^"/]+)".*#\1#')

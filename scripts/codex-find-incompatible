@@ -1,0 +1,94 @@
+#!/bin/bash
+# win-hooks: codex-find-incompatible
+# Outputs tab-separated rows:
+# plugin_id install_path hooks_file event group_index hook_index command
+
+set -uo pipefail
+
+NEWER_THAN=""
+if [[ "${1:-}" == "--newer" ]]; then
+  NEWER_THAN="${2:-}"
+fi
+
+if ! command -v codex >/dev/null 2>&1; then
+  exit 0
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "win-hooks: node not found, cannot inspect Codex plugins" >&2
+  exit 1
+fi
+
+PLUGIN_LIST=$(codex plugin list --json 2>/dev/null) || exit 0
+export PLUGIN_LIST NEWER_THAN
+
+node <<'JSEOF'
+const fs = require('fs');
+const path = require('path');
+
+const list = JSON.parse(process.env.PLUGIN_LIST || '{}');
+const newerThan = process.env.NEWER_THAN || '';
+const newerTime = newerThan && fs.existsSync(newerThan) ? fs.statSync(newerThan).mtimeMs : 0;
+
+function normalize(p) {
+  return String(p || '').replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
+}
+
+function hasPluginRoot(cmd) {
+  return /\$\{?PLUGIN_ROOT\}?/.test(cmd);
+}
+
+function isIncompatible(cmd, commandWindows) {
+  if (!cmd || commandWindows) return false;
+  const c = String(cmd).replace(/\\"/g, '"').trim();
+  if (!c) return false;
+  if (/\.cmd(\s|$|")/i.test(c) || /\.exe(\s|$|")/i.test(c)) return false;
+  if (/\.sh(\s|$|")/i.test(c)) return true;
+  if (hasPluginRoot(c)) {
+    const first = c.split(/\s+/)[0].replace(/^["']|["']$/g, '');
+    if (/^(node|npx|npm)$/i.test(first)) return false;
+    return true;
+  }
+  const first = c.split(/\s+/)[0].replace(/^["']|["']$/g, '');
+  if (/^(node|npx|npm|powershell|powershell\.exe|pwsh|cmd|cmd\.exe)$/i.test(first)) return false;
+  return false;
+}
+
+for (const plugin of list.installed || []) {
+  if (!plugin.installed || !plugin.enabled) continue;
+  const pluginId = plugin.pluginId || `${plugin.name || 'unknown'}@${plugin.marketplaceName || 'unknown'}`;
+  if (/^(win-hooks|codex-win-hooks)@/.test(pluginId) || plugin.name === 'win-hooks') continue;
+  const installPath = normalize(plugin.source && plugin.source.path);
+  if (!installPath) continue;
+  const manifest = path.join(installPath, '.codex-plugin', 'plugin.json');
+  if (!fs.existsSync(manifest)) continue;
+  let meta;
+  try {
+    meta = JSON.parse(fs.readFileSync(manifest, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    continue;
+  }
+  if (!meta.hooks) continue;
+  const hooksFile = normalize(path.resolve(installPath, meta.hooks));
+  if (!fs.existsSync(hooksFile)) continue;
+  if (newerTime && fs.statSync(hooksFile).mtimeMs <= newerTime) continue;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(hooksFile, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    continue;
+  }
+  const hooks = data.hooks || {};
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    groups.forEach((group, groupIndex) => {
+      const commands = Array.isArray(group && group.hooks) ? group.hooks : [];
+      commands.forEach((hook, hookIndex) => {
+        if (!hook || hook.type !== 'command') return;
+        if (isIncompatible(hook.command || '', hook.commandWindows || '')) {
+          console.log([pluginId, installPath, hooksFile, event, groupIndex, hookIndex, hook.command].join('\t'));
+        }
+      });
+    });
+  }
+}
+JSEOF

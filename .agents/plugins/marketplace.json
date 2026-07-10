@@ -1,0 +1,12 @@
+{
+  "name": "win-hooks",
+  "plugins": [
+    {
+      "name": "win-hooks",
+      "source": {
+        "source": "local",
+        "path": "./"
+      }
+    }
+  ]
+}
