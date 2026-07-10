@@ -4,6 +4,8 @@
 
 **Automated self-healing, not one-off fixes.** When a Windows bug is reported, never fix it directly on the machine — pattern-match the error, add detection to the scanner / `verify`, and add automatic remediation to the `patch-all` pipeline.
 
+**Codex and Claude hook surfaces differ.** Claude Code repair rewrites incompatible hook `command` values to `_hooks/run-hook.cmd`. Codex repair should preserve `command` and add `commandWindows` pointing at `_codex_hooks/run-hook.cmd`, because Codex has a first-class Windows hook command field.
+
 **One root cause = one issue type.** Extend the existing check/issue type for a variant instead of adding a new one; fold an overlapping new CASE into the existing one, and merge a single-CASE section into a neighbor. **CASE-NN are discovery-order stable IDs** — append a new issue at the next free number and **never renumber** (SKILL.md, status.md, and git reference them); section order is by priority, independent of the numbers.
 
 **Before committing, sync every surface:**
@@ -12,8 +14,8 @@
 2. **README.md** — pipeline or components changed → update.
 3. **skills/diagnose/SKILL.md** — new symptom or issue type → update.
 4. **commands/status.md, fix.md** — issue type or script changed → update.
-5. **scripts/verify** — new issue type → add the check + a header line.
-6. **Cross-check** — the issue-type set must match across the verify header, SKILL.md table, and status.md list.
+5. **scripts/verify** or **scripts/codex-verify** — new issue type → add the check + a header line to the relevant verifier.
+6. **Cross-check** — the issue-type set must match across the relevant verifier header, SKILL.md table, and status.md list.
 7. **Version bump** — `plugin.json` + `marketplace.json`, then tag `v{x.y.z}`. New detection/fix capability = `feat:` (minor); repairing existing detection, docs, or refactors = patch.
 
 **Commit messages:** one bullet per line, no wrapping within a bullet; no co-author tags; no version-bump lines.
@@ -104,8 +106,8 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 
 ### CASE-24: Wrapper execs a bogus interpreter path
 - **Symptom**: Hook fails every invocation with `bash: /c/Users/.../<plugin>/<ver>/bash: No such file or directory` (or another bare interpreter name as the missing file). Affects hooks patched from interpreter-prefixed commands — e.g. learning-output-style / explanatory-output-style (SessionStart), ralph-loop (Stop), remember (SessionStart/PostToolUse).
-- **Root cause**: When the original command is interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-start.sh`), `apply-patches` extracted the script path with `awk '{print $1}'`, which returns the *interpreter* (`bash`), not the path. The generated wrapper became `exec bash "$PLUGIN_ROOT/bash" "$@"` — a file that does not exist. `find-incompatible` can't re-flag it (the hook already points at `run-hook.cmd`) and `verify` only checked wrapper *existence*, not correctness — so it stayed hidden.
-- **Fix**: `apply-patches` now extracts the `${CLAUDE_PLUGIN_ROOT}/...` token regardless of position (`extract_path_part`) for the wrapper name, body, and preserved args, so fresh patches are correct. `verify --fix` detects a wrapper whose `exec` target is a single-segment `$PLUGIN_ROOT/<X>` that is a bare interpreter name or a nonexistent file, and repairs the body to `exec bash "$@"` (run-hook.cmd already passes the real target as `$@`), healing existing installs without a reinstall.
+- **Root cause**: When the original command is interpreter-prefixed (`bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-start.sh`), `apply-patches` extracted the script path with `awk '{print $1}'`, which returns the *interpreter* (`bash`), not the path. The generated wrapper became `exec bash "$PLUGIN_ROOT/bash" "$@"` — a file that does not exist. A related variant used the unbraced/quoted form (`bash "$CLAUDE_PLUGIN_ROOT"/hooks/x.sh`); because scanner output preserves JSON escapes, `apply-patches` failed to recognize the plugin-root path, fell through to bare-command wrapping, and wrote literal `\"$CLAUDE_PLUGIN_ROOT\"/...` bytes into the wrapper. `find-incompatible` can't re-flag either form once the hook already points at `run-hook.cmd`, and older `verify` checked wrapper *existence*, not this body correctness — so it stayed hidden.
+- **Fix**: `apply-patches` now extracts both `${CLAUDE_PLUGIN_ROOT}/...` and `"$CLAUDE_PLUGIN_ROOT"/...` tokens after JSON quote unescaping for the wrapper name, body, and preserved args, so fresh patches are correct. `verify --fix` detects both a wrapper whose `exec` target is a single-segment `$PLUGIN_ROOT/<X>` that is a bare interpreter name or nonexistent file, and a wrapper containing literal escaped quotes around `$CLAUDE_PLUGIN_ROOT`; it repairs them to path-baked wrapper bodies (or `exec bash "$@"` for forwarded-target wrappers), healing existing installs without a reinstall.
 - **Issue type**: `wrapper_broken`
 
 ### CASE-21: Python not installed
@@ -119,7 +121,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 ### CASE-15: Scanner returns empty but hooks are broken
 - **Symptom**: `find-incompatible` outputs nothing, but plugins error on load.
 - **Root cause**: Scanner only detects incompatible commands, not encoding corruption.
-- **Fix**: `verify` performs post-patch health checks (JSON validity, BOM, CRLF, wrapper existence).
+- **Fix**: `verify` performs post-patch health checks for JSON validity, BOM, CRLF, missing wrappers, broken wrapper bodies, recursive wrappers, and Python stub failures.
 
 ### CASE-16: Missing wrapper scripts
 - **Symptom**: A patched hook references a `_hooks/` wrapper that doesn't exist — `bash: .../_hooks/<wrapper>: No such file or directory` on the hooked event. Causes: interrupted patching (hooks.json patched but wrapper not written) or external deletion.
@@ -183,3 +185,13 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Symptom**: Works on developer's machine, fails on others.
 - **Root cause**: Manual fixes bypass the pipeline, so the pipeline was never tested.
 - **Fix**: Always test on clean install. Pipeline is sole source of truth.
+
+---
+
+## Codex Hook Compatibility
+
+### CASE-27: Codex plugins ship Unix-only hook commands
+- **Symptom**: A Codex plugin hook works on macOS/Linux but fails on Windows when the hook command calls `bash`, `.sh`, or a plugin-root script without a Windows dispatch path.
+- **Root cause**: Codex hook entries may define a portable `command` and an optional Windows-specific `commandWindows`. Plugins that only ship `command` can still rely on Unix shell behavior.
+- **Fix**: The Codex version (`.codex-plugin/plugin.json` + `hooks/codex-hooks.json`) runs `hooks/codex-patch-all`. Its scanner is `scripts/codex-find-incompatible`, which finds installed/enabled hook rows whose portable `command` still lacks a Windows dispatch path. `scripts/codex-apply-patches` preserves `command`, adds `commandWindows`, creates `_codex_hooks/`, and writes `hooks.json.codex-win-hooks.bak` before patching. The Codex verifier is `scripts/codex-verify`; it checks `incompatible`, `bom`, `json_invalid`, `json_crlf`, `cmd_missing`, `wrapper_missing`, `wrapper_broken`, `recursive_wrapper`, and `python3_stub`. With `--fix` it repairs BOM/CRLF, restores `_codex_hooks/run-hook.cmd`, recreates or rewrites generated wrappers, disables recursive wrappers, and reruns the scanner/applier path for remaining `incompatible` rows.
+- **Issue type**: `incompatible` (with follow-on verifier issue types `bom`, `json_invalid`, `json_crlf`, `cmd_missing`, `wrapper_missing`, `wrapper_broken`, `recursive_wrapper`, and `python3_stub`)

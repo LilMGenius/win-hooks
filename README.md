@@ -32,6 +32,8 @@ The plugin may be fine on macOS or Linux, but its hooks assume Unix tools, `.sh`
 
 ## Quick Start
 
+### Claude Code
+
 Paste once:
 
 ```bash
@@ -40,9 +42,20 @@ claude plugin marketplace add LilMGenius/win-hooks && claude plugin install win-
 
 That is the setup. No config, no flags, no manual patching.
 
+### Codex
+
+Paste once:
+
+```bash
+codex plugin marketplace add LilMGenius/win-hooks
+codex plugin add win-hooks@win-hooks
+```
+
+The Codex version uses Codex's native `commandWindows` hook field. It leaves the original cross-platform `command` intact and adds a Windows-specific wrapper only for installed Codex plugins whose hooks need one.
+
 ## What win-hooks Fixes
 
-win-hooks scans your installed Claude Code plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
+win-hooks scans your installed Claude Code or Codex plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
 
 It handles the common failure modes:
 
@@ -57,11 +70,21 @@ Original plugin files are backed up where hooks are patched, and already-compati
 
 ## How It Stays Fixed
 
-win-hooks runs automatically at session start:
+win-hooks runs automatically at session start.
+
+Claude Code pipeline:
 
 ```
 scan plugins -> patch hooks.json -> normalize settings.json -> verify & auto-repair
 ```
+
+Codex pipeline:
+
+```
+hooks/codex-patch-all -> codex plugin list --json -> scripts/codex-find-incompatible -> scripts/codex-apply-patches -> scripts/codex-verify
+```
+
+For Codex, `scripts/codex-find-incompatible` is the scanner for installed and enabled hook rows that still need a Windows dispatch path. `scripts/codex-apply-patches` preserves portable `command`, adds Windows-only `commandWindows`, creates `_codex_hooks/`, and writes `hooks.json.codex-win-hooks.bak` before patching. `scripts/codex-verify` is the Codex verifier: it checks `incompatible`, `bom`, `json_invalid`, `json_crlf`, `cmd_missing`, `wrapper_missing`, `wrapper_broken`, `recursive_wrapper`, and `python3_stub`. With `--fix` it repairs BOM/CRLF, restores `_codex_hooks/run-hook.cmd`, recreates or rewrites generated wrappers, disables recursive wrappers, and reruns the scanner/applier path for remaining `incompatible` rows.
 
 Plugin updates are covered too. If an update replaces a repaired hook with a fresh broken one, win-hooks re-patches it at the next session start.
 
@@ -73,6 +96,7 @@ The normal path is silent, so win-hooks writes a small heartbeat log:
 
 ```bash
 tail -n 5 ~/.claude/win-hooks/last-run.log
+tail -n 5 ~/.codex/win-hooks/last-run.log
 ```
 
 - `phase=done` means the self-heal completed.
@@ -95,14 +119,15 @@ You can also run:
 ## Requirements
 
 - Windows 10/11
-- Claude Code
+- Claude Code or Codex
 - Git for Windows
+- Node.js available on PATH
 
-Claude Code provides the Node.js runtime used for JSON validation. Git for Windows provides the Bash runtime used to execute repaired hooks.
+Claude Code already provides the Node.js runtime used by the Claude-side patch/verify flow. The Codex flow also uses `node` in `scripts/codex-find-incompatible` and `scripts/codex-verify`. Git for Windows provides the Bash runtime used to execute repaired hooks.
 
 ## Technical Notes
 
-win-hooks creates a dedicated `_hooks/` directory inside each patched plugin. The original hook target stays untouched, and `hooks.json` points at a Windows-safe wrapper.
+For Claude Code, win-hooks creates a dedicated `_hooks/` directory inside each patched plugin. The original hook target stays untouched, and `hooks.json` points at a Windows-safe wrapper.
 
 ```
 plugin/
@@ -117,5 +142,21 @@ plugin/
 ```
 
 The wrapper entry point is a polyglot `.cmd` file: Windows runs the batch portion, while Bash can run the shell portion. That keeps one repaired hook path usable across both Windows dispatch and Bash execution.
+
+For Codex, win-hooks creates `_codex_hooks/` and adds `commandWindows` to incompatible hook entries:
+
+```
+plugin/
+├── .codex-plugin/
+│   └── plugin.json
+├── hooks/
+│   ├── hooks.json
+│   └── hooks.json.codex-win-hooks.bak
+└── _codex_hooks/
+    ├── run-hook.cmd
+    └── <wrapper>
+```
+
+Codex keeps using the original `command` on macOS/Linux. On Windows it uses the generated `commandWindows` wrapper.
 
 Contributors can read [`CLAUDE.md`](CLAUDE.md) for the internal scanner, patcher, verifier, and case notes.
