@@ -27,12 +27,8 @@ if [[ ! -f "$LIB" ]]; then
 fi
 source "$LIB"
 
-decode_json_command() {
-  printf '%s' "$1" | sed 's/\\"/"/g'
-}
-
 extract_rel_path() {
-  decode_json_command "$1" \
+  wh_decode_json_command "$1" \
     | sed -nE 's#.*"?\$(\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
     | head -1
 }
@@ -47,7 +43,7 @@ extract_path_part() {
   if [[ -n "$rel" ]]; then
     printf '${CLAUDE_PLUGIN_ROOT}/%s' "$rel"
   else
-    decode_json_command "$cmd" | awk '{print $1}' | tr -d "\"'\\\\"
+    wh_decode_json_command "$cmd" | awk '{print $1}' | tr -d "\"'\\\\"
   fi
 }
 
@@ -76,7 +72,7 @@ get_wrapper_name() {
 
   # Bare command: "foo bar baz" -> "foo-bar-baz"
   local name
-  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  name=$(wh_decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
   name=$(printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g')
   echo "${name:-hook-wrapper}"
 }
@@ -85,7 +81,7 @@ get_wrapper_name() {
 generate_wrapper() {
   local cmd="$1"
   local shell_cmd rel_path
-  shell_cmd=$(decode_json_command "$cmd")
+  shell_cmd=$(wh_decode_json_command "$cmd")
   rel_path=$(extract_rel_path "$cmd")
 
   # .sh script via CLAUDE_PLUGIN_ROOT
@@ -234,7 +230,7 @@ while IFS=$'\t' read -r plugin install_path hooks_file event cmd; do
   # itself is never re-appended as a bogus arg.
   rel_path=$(extract_rel_path "$cmd")
   if [[ -n "$rel_path" ]]; then
-    extra_args=$(decode_json_command "$cmd" \
+    extra_args=$(wh_decode_json_command "$cmd" \
       | sed -E 's#.*"?\$(\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT)"?/[A-Za-z0-9_./-]+##' \
       | sed -E 's/^[\"[:space:]]+//; s/[[:space:]]+$//')
     [[ -n "$extra_args" ]] && new_cmd="${new_cmd} ${extra_args}"

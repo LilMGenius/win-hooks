@@ -12,6 +12,12 @@
 # Strip a UTF-8 BOM (EF BB BF) from stdin, if present.
 wh_strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
 
+# Un-escape a hook command as it appears in scanner output, where JSON string
+# quoting is preserved (`\"` for a literal quote). Turns the stored form back
+# into the shell command the hook actually runs, so path/interpreter parsing
+# sees real quotes. Shared by apply-patches (Claude) and the codex-* scripts.
+wh_decode_json_command() { printf '%s' "$1" | sed 's/\\"/"/g'; }
+
 # Parse installed_plugins.json (v1 or v2 format) at the given path.
 # Output: plugin_name\tinstall_path (backslashes collapsed to forward slashes).
 # v2 wraps plugins under {"version":2,"plugins":{"name@source":[{...}]}} —

@@ -12,12 +12,16 @@ fi
 TEMPLATE_CMD="$1"
 [[ -f "$TEMPLATE_CMD" ]] || { echo "Template not found: $TEMPLATE_CMD" >&2; exit 1; }
 
-decode_json_command() {
-  printf '%s' "$1" | sed 's/\\"/"/g'
-}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB="${SCRIPT_DIR}/lib/plugins.sh"
+if [[ ! -f "$LIB" ]]; then
+  echo "win-hooks: shared lib not found: $LIB" >&2
+  exit 1
+fi
+source "$LIB"
 
 extract_rel_path() {
-  decode_json_command "$1" \
+  wh_decode_json_command "$1" \
     | sed -nE 's#.*"?\$(\{PLUGIN_ROOT\}|PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
     | head -1
 }
@@ -31,13 +35,13 @@ wrapper_name_for() {
     printf '%s' "${base//_/-}" | sed 's/[^a-zA-Z0-9-]//g'
     return
   fi
-  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  name=$(wh_decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
   printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g'
 }
 
 generate_wrapper() {
   local cmd="$1" shell_cmd rel interp dep
-  shell_cmd=$(decode_json_command "$cmd")
+  shell_cmd=$(wh_decode_json_command "$cmd")
   rel=$(extract_rel_path "$cmd")
   if [[ -n "$rel" ]]; then
     interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | tr -d "\"'\\\\")

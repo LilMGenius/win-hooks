@@ -18,23 +18,6 @@ add_issue() {
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4"
 }
 
-strip_bom() { sed '1s/^\xEF\xBB\xBF//'; }
-
-validate_json() {
-  local file="$1"
-  node -e "
-try {
-  const fs = require('fs');
-  const text = fs.readFileSync(process.argv[1], 'utf8').replace(/^\uFEFF/, '');
-  JSON.parse(text);
-} catch (error) {
-  process.stderr.write(error.message);
-  process.exit(1);
-}
-" "$file" 2>&1
-  return $?
-}
-
 if ! command -v codex >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
   echo "win-hooks codex verify: skipped"
   exit 0
@@ -48,6 +31,13 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SCANNER="${SCRIPT_DIR}/codex-find-incompatible"
 APPLIER="${SCRIPT_DIR}/codex-apply-patches"
 TEMPLATE_CMD="${PLUGIN_ROOT}/hooks/run-hook.cmd"
+
+LIB="${SCRIPT_DIR}/lib/plugins.sh"
+if [[ ! -f "$LIB" ]]; then
+  echo "win-hooks: shared lib not found: $LIB" >&2
+  exit 1
+fi
+source "$LIB"
 
 list_codex_plugins() {
   node <<'JSEOF'
@@ -78,25 +68,8 @@ for (const plugin of list.installed || []) {
 JSEOF
 }
 
-resolve_python() {
-  local py path
-  for py in python3 python py; do
-    command -v "$py" >/dev/null 2>&1 || continue
-    "$py" -c "" >/dev/null 2>&1 || continue
-    path=$(command -v "$py")
-    command -v cygpath >/dev/null 2>&1 && path=$(cygpath -m "$path" 2>/dev/null || printf '%s' "$path")
-    [[ -f "$path" ]] || { [[ -f "${path}.exe" ]] && path="${path}.exe"; }
-    printf '%s' "$path"
-    return 0
-  done
-}
-
-decode_json_command() {
-  printf '%s' "$1" | sed 's/\\"/"/g'
-}
-
 extract_rel_path() {
-  decode_json_command "$1" \
+  wh_decode_json_command "$1" \
     | sed -nE 's#.*"?\$(\{PLUGIN_ROOT\}|PLUGIN_ROOT)"?/([A-Za-z0-9_./-]+).*#\2#p' \
     | head -1
 }
@@ -110,13 +83,13 @@ wrapper_name_for() {
     printf '%s' "${base//_/-}" | sed 's/[^a-zA-Z0-9-]//g'
     return
   fi
-  name=$(decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
+  name=$(wh_decode_json_command "$cmd" | awk '{for(i=1;i<=3&&i<=NF;i++){printf "%s",$i;if(i<3&&i<NF)printf "-"}}')
   printf '%s' "$name" | sed 's/[^a-zA-Z0-9-]//g'
 }
 
 create_wrapper_body() {
   local cmd="$1" rel interp py shell_cmd
-  shell_cmd=$(decode_json_command "$cmd")
+  shell_cmd=$(wh_decode_json_command "$cmd")
   rel=$(extract_rel_path "$cmd")
   if [[ -z "$rel" ]]; then
     printf '#!/bin/bash\n# win-hooks: recreated fallback wrapper\nexec bash "$@"\n'
@@ -125,7 +98,7 @@ create_wrapper_body() {
 
   interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | sed "s/[\"'\\\\]//g")
   if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
-    py=$(resolve_python)
+    py=$(wh_resolve_python)
     if [[ -n "$py" ]]; then
       printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$rel"
     else
@@ -254,7 +227,7 @@ check_json_valid() {
   local plugin="$1" install_path="$2" hooks_file="$3"
   local err
   [[ -f "$hooks_file" ]] || return 1
-  err=$(validate_json "$hooks_file" 2>&1) || {
+  err=$(wh_validate_json "$hooks_file" 2>&1) || {
     add_issue "$plugin" "$install_path" "json_invalid" "$err"
     return 1
   }
@@ -270,7 +243,7 @@ check_recursive_wrapper() {
     for f in "$dir"/*; do
       [[ -f "$f" ]] || continue
       [[ "$(basename "$f")" == "run-hook.cmd" ]] && continue
-      first_line=$(head -c 64 "$f" | tr -d '\r' | strip_bom | head -1)
+      first_line=$(head -c 64 "$f" | tr -d '\r' | wh_strip_bom | head -1)
       [[ "$first_line" != "#!/bin/bash"* && "$first_line" != "#!/usr/bin/env bash"* ]] && continue
       base=$(basename "$f")
       if grep -qE "(python3?|node)[[:space:]].*${base}" "$f" 2>/dev/null; then
