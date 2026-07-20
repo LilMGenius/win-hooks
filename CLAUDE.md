@@ -44,6 +44,8 @@ Every hook script win-hooks ships (`patch-all`, `reheal`) — and every wrapper 
 
 `bash test/run.sh` runs the synthetic-fixture suite (`test/fixtures/`): one fixture per CASE, each driven through the real `patch-all` → `verify` pipeline inside an isolated sandbox — a private `$HOME` **and** a private copy of `hooks/`+`scripts/`, so a test run never touches this repo's own `hooks/hooks.json` (which `patch-all` self-edits every run for its adaptive timeout, CASE-25). `test/lib/harness.sh` has the sandbox/assert helpers. Run it before committing a change to the scanner, patcher, or verifier.
 
+The Codex lane is separate: `bash test/codex-run.sh` stubs a fake `codex` CLI on PATH (the Codex path shells out to `codex plugin list --json`, which the Claude suite can't reach) and drives the real `codex-find-incompatible` → `codex-apply-patches` → `codex-verify` pipeline against a synthetic plugin. Run it after a change to the `codex-*` scripts.
+
 ---
 
 ## Known Edge Cases & Scenarios
