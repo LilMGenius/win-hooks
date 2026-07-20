@@ -40,12 +40,22 @@ wrapper_name_for() {
 }
 
 generate_wrapper() {
-  local cmd="$1" shell_cmd rel interp dep
+  local cmd="$1" shell_cmd rel interp dep py
   shell_cmd=$(wh_decode_json_command "$cmd")
   rel=$(extract_rel_path "$cmd")
   if [[ -n "$rel" ]]; then
     interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | tr -d "\"'\\\\")
-    if [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
+    if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
+      # Bare python3/python may be a dead Microsoft Store stub, or resolve to a
+      # different interpreter under cmd.exe hook dispatch (CASE-09) — bake an
+      # absolute, functionally-probed Python so the hook runs across machines.
+      py=$(wh_resolve_python || true)
+      if [[ -n "$py" ]]; then
+        printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$rel"
+      else
+        printf '#!/bin/bash\n# win-hooks: no working Python found; graceful no-op\nexit 0\n'
+      fi
+    elif [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
       printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
     else
       printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
