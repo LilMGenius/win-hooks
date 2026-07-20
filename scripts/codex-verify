@@ -88,7 +88,7 @@ wrapper_name_for() {
 }
 
 create_wrapper_body() {
-  local cmd="$1" rel interp py shell_cmd
+  local cmd="$1" rel interp shell_cmd
   shell_cmd=$(wh_decode_json_command "$cmd")
   rel=$(extract_rel_path "$cmd")
   if [[ -z "$rel" ]]; then
@@ -97,18 +97,7 @@ create_wrapper_body() {
   fi
 
   interp=$(printf '%s' "$shell_cmd" | awk '{print $1}' | sed "s/[\"'\\\\]//g")
-  if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
-    py=$(wh_resolve_python)
-    if [[ -n "$py" ]]; then
-      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$py" "$rel"
-    else
-      printf '#!/bin/bash\n# win-hooks: no working Python found; graceful no-op\nexit 0\n'
-    fi
-  elif [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
-    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
-  else
-    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
-  fi
+  wh_wrapper_exec_body "$rel" "$interp"
 }
 
 backup_command_for_wrapper() {

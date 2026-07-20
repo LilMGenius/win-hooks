@@ -76,6 +76,29 @@ wh_resolve_python() {
   return 1
 }
 
+# Print a wrapper-body script that execs the plugin-root script <rel> under the
+# right runtime for <interp>: a resolved absolute Python for python/python3
+# (CASE-09 — bare python3 may be a dead Store stub, or a different interpreter
+# under cmd.exe dispatch), bash for .sh/bash/sh, else the script directly. A
+# graceful exit-0 no-op when a python hook has no working interpreter. Shared by
+# the Codex patcher (generate_wrapper) and verifier (create_wrapper_body) so
+# their wrapper bodies cannot drift (see the CASE-09-parity regression).
+wh_wrapper_exec_body() {
+  local rel="$1" interp="$2" _py
+  if [[ "$interp" == "python3" || "$interp" == "python" ]]; then
+    _py=$(wh_resolve_python || true)
+    if [[ -n "$_py" ]]; then
+      printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "%s" "$PLUGIN_ROOT/%s" "$@"\n' "$_py" "$rel"
+    else
+      printf '#!/bin/bash\n# win-hooks: no working Python found; graceful no-op\nexit 0\n'
+    fi
+  elif [[ "$rel" == *.sh || "$interp" == "bash" || "$interp" == "sh" ]]; then
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec bash "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+  else
+    printf '#!/bin/bash\nSCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\nPLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\nexec "$PLUGIN_ROOT/%s" "$@"\n' "$rel"
+  fi
+}
+
 # Validate that a file contains valid JSON. Fallback chain: node (guaranteed
 # by Claude Code) -> powershell (Windows built-in) -> skip (no validator
 # available, treated as valid so a missing runtime never blocks patching).
