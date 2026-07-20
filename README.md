@@ -6,13 +6,14 @@
 
 **Don't let Windows kill your vibe coding flow.**
 
-Every Claude Code plugin assumes you're on macOS or Linux.<br>
+Every Claude Code / Codex plugin assumes you're on macOS or Linux.<br>
 On Windows, your sessions start with a wall of red hook errors.<br>
 **win-hooks fixes that. Automatically. Every session.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows)](https://www.microsoft.com/windows)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-6B4FBB)](https://docs.anthropic.com/en/docs/claude-code)
+[![Codex](https://img.shields.io/badge/Codex-Plugin-000000?logo=openai&logoColor=white)](https://developers.openai.com/codex)
 
 </div>
 
@@ -20,7 +21,7 @@ On Windows, your sessions start with a wall of red hook errors.<br>
 
 ## The Problem
 
-You install a Claude Code plugin, start a session, and see errors like:
+You install a Claude Code / Codex plugin, start a session, and see errors like:
 
 ```
 SessionStart hook error: /bin/bash: command not found
@@ -55,7 +56,7 @@ The Codex version uses Codex's native `commandWindows` hook field. It leaves the
 
 ## What win-hooks Fixes
 
-win-hooks scans your installed Claude Code or Codex plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
+win-hooks scans your installed Claude Code / Codex plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
 
 It handles the common failure modes:
 
@@ -119,7 +120,7 @@ You can also run:
 ## Requirements
 
 - Windows 10/11
-- Claude Code or Codex
+- Claude Code / Codex
 - Git for Windows
 - Node.js available on PATH
 
