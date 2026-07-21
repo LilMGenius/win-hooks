@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# win-hooks is Windows-only (the pipeline exits 0 off-Windows), so the suites
+# only mean anything on a Windows runner with Git Bash + Node.
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Claude synthetic-fixture suite
+        shell: bash
+        run: bash test/run.sh
+
+      - name: Codex lane
+        shell: bash
+        run: bash test/codex-run.sh
