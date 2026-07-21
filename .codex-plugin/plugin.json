@@ -1,6 +1,6 @@
 {
   "name": "win-hooks",
-  "version": "1.10.0-codex.0",
+  "version": "1.10.0",
   "description": "Auto-patches Codex plugin hooks for Windows compatibility by adding commandWindows wrappers.",
   "author": {
     "name": "LilMGenius",
@@ -9,7 +9,14 @@
   "homepage": "https://github.com/LilMGenius/win-hooks",
   "repository": "https://github.com/LilMGenius/win-hooks",
   "license": "MIT",
-  "keywords": ["windows", "hooks", "codex", "codex-plugin", "compatibility", "patch"],
+  "keywords": [
+    "windows",
+    "hooks",
+    "codex",
+    "codex-plugin",
+    "compatibility",
+    "patch"
+  ],
   "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "win-hooks",
@@ -17,7 +24,10 @@
     "longDescription": "win-hooks scans installed Codex plugins and adds Windows-specific commandWindows wrappers for hook commands that assume Unix shells, .sh scripts, or non-Windows dispatch.",
     "developerName": "LilMGenius",
     "category": "Developer Tools",
-    "capabilities": ["Hooks", "Workflow"],
+    "capabilities": [
+      "Hooks",
+      "Workflow"
+    ],
     "websiteURL": "https://github.com/LilMGenius/win-hooks",
     "privacyPolicyURL": "https://github.com/LilMGenius/win-hooks#privacy",
     "termsOfServiceURL": "https://github.com/LilMGenius/win-hooks#license",

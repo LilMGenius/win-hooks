@@ -72,6 +72,13 @@ rm -f "$IJ"
 wh_test "wh_resolve_python finds a working interpreter"
 if PY=$(wh_resolve_python) && [[ -n "$PY" ]] && [[ -f "$PY" ]]; then wh_pass; else wh_fail "got: ${PY:-<empty>}"; fi
 
+wh_test "version is in sync across package.json and every plugin manifest"
+if command -v node >/dev/null 2>&1; then
+  if VOUT=$(node "$WH_REPO_ROOT/scripts/sync-version" --check 2>&1); then wh_pass; else wh_fail "$VOUT"; fi
+else
+  wh_pass  # no node: sync-version can't run; skip rather than fail
+fi
+
 echo
 
 # ── Pipeline tests (full sandbox, real patch-all + verify) ─────────

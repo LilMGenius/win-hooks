@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+// win-hooks: scripts/sync-version
+// Single source of truth for the version = package.json "version". Propagates
+// it into the plugin manifests so the four copies never drift (win-hooks' own
+// SSOT principle — see CLAUDE.md Conventions).
+//
+//   node scripts/sync-version           write package.json's version into the manifests
+//   node scripts/sync-version --check    exit 1 if any manifest disagrees (used by test/run.sh)
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const check = process.argv.includes('--check');
+const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+
+// Each target: file path + how to read/set its version (marketplace nests it).
+const targets = [
+  { rel: '.claude-plugin/plugin.json', get: (d) => d.version, set: (d, v) => { d.version = v; } },
+  { rel: '.codex-plugin/plugin.json', get: (d) => d.version, set: (d, v) => { d.version = v; } },
+  { rel: '.claude-plugin/marketplace.json', get: (d) => d.plugins?.[0]?.version, set: (d, v) => { d.plugins[0].version = v; } },
+];
+
+let drift = 0;
+for (const t of targets) {
+  const path = join(ROOT, t.rel);
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  const current = t.get(data);
+  if (current === version) continue;
+  if (check) {
+    console.error(`version drift: ${t.rel} is ${current}, package.json is ${version}`);
+    drift++;
+    continue;
+  }
+  t.set(data, version);
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+  console.log(`synced ${t.rel} -> ${version}`);
+}
+
+if (check && drift) process.exit(1);
+if (check) console.log(`version ${version} is in sync across all manifests`);
