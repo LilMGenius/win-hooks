@@ -54,6 +54,17 @@ codex plugin add win-hooks@win-hooks
 
 The Codex version uses Codex's native `commandWindows` hook field. It leaves the original cross-platform `command` intact and adds a Windows-specific wrapper only for installed Codex plugins whose hooks need one.
 
+### CLI (npm)
+
+Want a one-shot fix, or to run it in CI, without installing the plugin? Run it directly:
+
+```bash
+npx win-hooks           # repair installed Claude Code AND Codex plugin hooks
+npx win-hooks status    # show the last repair result
+```
+
+Windows only. It uses the same runtimes as the plugin — Git for Windows (Bash) and Node.js. Installed as a plugin, win-hooks also runs automatically every session; the CLI is for when you'd rather trigger it yourself.
+
 ## What win-hooks Fixes
 
 win-hooks scans your installed Claude Code / Codex plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
