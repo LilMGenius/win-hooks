@@ -11,7 +11,7 @@ Every Claude Code / Codex plugin assumes macOS or Linux. On Windows their hooks 
 ### Highlights
 
 - **Dual-host support.** Repairs both Claude Code *and* Codex plugin hooks on Windows. The Codex path uses Codex's native `commandWindows` field, leaving the portable `command` intact — huge thanks to **[@jml226](https://github.com/jml226)** ([#1](https://github.com/LilMGenius/win-hooks/pull/1)) for the Codex support.
-- **npm CLI.** `npx win-hooks` runs the same repair pipeline standalone — a one-shot fix, or for CI — without installing the plugin.
+- **npm CLI.** `npx @lilmgenius/win-hooks` runs the same repair pipeline standalone — a one-shot fix, or for CI — without installing the plugin.
 - **Self-healing.** Runs at every session start, re-patches after a plugin update mid-session, and adaptively sizes its own timeout so it never gets silently killed.
 - **Verified, not hoped.** A synthetic-fixture test suite drives the real patch→verify pipeline in isolated sandboxes, now run on a Windows CI runner.
 
@@ -33,7 +33,7 @@ claude plugin marketplace add LilMGenius/win-hooks && claude plugin install win-
 codex plugin marketplace add LilMGenius/win-hooks && codex plugin add win-hooks@win-hooks
 
 # or a one-shot CLI fix
-npx win-hooks
+npx @lilmgenius/win-hooks
 ```
 
 ### Requirements

@@ -48,19 +48,18 @@ That is the setup. No config, no flags, no manual patching.
 Paste once:
 
 ```bash
-codex plugin marketplace add LilMGenius/win-hooks
-codex plugin add win-hooks@win-hooks
+codex plugin marketplace add LilMGenius/win-hooks && codex plugin add win-hooks@win-hooks
 ```
 
-The Codex version uses Codex's native `commandWindows` hook field. It leaves the original cross-platform `command` intact and adds a Windows-specific wrapper only for installed Codex plugins whose hooks need one.
+Codex uses its native `commandWindows` field, so the original cross-platform `command` stays intact.
 
 ### CLI (npm)
 
 Want a one-shot fix, or to run it in CI, without installing the plugin? Run it directly:
 
 ```bash
-npx win-hooks           # repair installed Claude Code AND Codex plugin hooks
-npx win-hooks status    # show the last repair result
+npx @lilmgenius/win-hooks         # repair installed Claude Code AND Codex plugin hooks
+npx @lilmgenius/win-hooks status  # show the last repair result
 ```
 
 Windows only. It uses the same runtimes as the plugin — Git for Windows (Bash) and Node.js. Installed as a plugin, win-hooks also runs automatically every session; the CLI is for when you'd rather trigger it yourself.
@@ -86,17 +85,17 @@ win-hooks runs automatically at session start.
 
 Claude Code pipeline:
 
-```
-scan plugins -> patch hooks.json -> normalize settings.json -> verify & auto-repair
+```mermaid
+flowchart LR
+    A[scan plugins] --> B[patch hooks.json] --> C[normalize settings.json] --> D["verify & auto-repair"]
 ```
 
 Codex pipeline:
 
+```mermaid
+flowchart LR
+    A[scan plugins] --> B["add commandWindows wrappers"] --> C["verify & auto-repair"]
 ```
-hooks/codex-patch-all -> codex plugin list --json -> scripts/codex-find-incompatible -> scripts/codex-apply-patches -> scripts/codex-verify
-```
-
-For Codex, `scripts/codex-find-incompatible` is the scanner for installed and enabled hook rows that still need a Windows dispatch path. `scripts/codex-apply-patches` preserves portable `command`, adds Windows-only `commandWindows`, creates `_codex_hooks/`, and writes `hooks.json.codex-win-hooks.bak` before patching. `scripts/codex-verify` is the Codex verifier: it checks `incompatible`, `bom`, `json_invalid`, `json_crlf`, `cmd_missing`, `wrapper_missing`, `wrapper_broken`, `recursive_wrapper`, and `python3_stub`. With `--fix` it repairs BOM/CRLF, restores `_codex_hooks/run-hook.cmd`, recreates or rewrites generated wrappers, disables recursive wrappers, and reruns the scanner/applier path for remaining `incompatible` rows.
 
 Plugin updates are covered too. If an update replaces a repaired hook with a fresh broken one, win-hooks re-patches it at the next session start.
 
