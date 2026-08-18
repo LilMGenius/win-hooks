@@ -1,15 +1,15 @@
 {
-  "description": "win-hooks: Auto-patches Codex plugin hooks for Windows compatibility",
+  "description": "win-hooks: repairs Codex plugin hooks for Windows",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${PLUGIN_ROOT}/hooks/codex-patch-all\"",
-            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" codex-patch-all",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/win-hooks\" heal codex",
+            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" win-hooks heal codex",
             "timeout": 60,
-            "statusMessage": "win-hooks: Checking Codex plugin hooks"
+            "statusMessage": "win-hooks: checking Codex plugin hooks"
           }
         ]
       }
@@ -19,10 +19,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${PLUGIN_ROOT}/hooks/codex-patch-all\" --changed-only",
-            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" codex-patch-all --changed-only",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/win-hooks\" heal codex --changed-only",
+            "commandWindows": "\"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" win-hooks heal codex --changed-only",
             "timeout": 20,
-            "statusMessage": "win-hooks: Checking changed Codex plugin hooks"
+            "statusMessage": "win-hooks: checking changed Codex plugin hooks"
           }
         ]
       }

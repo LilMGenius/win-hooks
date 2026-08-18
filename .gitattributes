@@ -1,13 +1,7 @@
-# Force LF line endings for all text files
+# Everything ships with LF. Git Bash executes the wrapper scripts win-hooks
+# generates, and CRLF breaks a shebang line (CASE-02/03).
 * text=auto eol=lf
 
-# Explicitly force LF for scripts that bash must execute
-hooks/patch-all text eol=lf
+# run-hook.cmd is a cmd.exe/bash polyglot; cmd.exe must not see a BOM or CRLF.
 hooks/run-hook.cmd text eol=lf
-scripts/find-incompatible text eol=lf
-scripts/apply-patches text eol=lf
-scripts/verify text eol=lf
-scripts/fix-backslash-paths text eol=lf
-*.sh text eol=lf
-*.json text eol=lf
-*.md text eol=lf
+hooks/win-hooks text eol=lf

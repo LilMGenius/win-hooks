@@ -4,11 +4,10 @@
 
 ### *"Linux? Nah. WinUX!"*
 
-**Don't let Windows kill your vibe coding flow.**
+**Windows auto-patcher for vibe coders.**
 
-Every Claude Code / Codex plugin assumes you're on macOS or Linux.<br>
-On Windows, your sessions start with a wall of red hook errors.<br>
-**win-hooks fixes that. Automatically. Every session.**
+Your AI coding tools work on Windows. Their plugins mostly don't.<br>
+win-hooks fixes them for you — automatically, every session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows)](https://www.microsoft.com/windows)
@@ -19,9 +18,7 @@ On Windows, your sessions start with a wall of red hook errors.<br>
 
 ---
 
-## The Problem
-
-You install a Claude Code / Codex plugin, start a session, and see errors like:
+## You know this screen
 
 ```
 SessionStart hook error: /bin/bash: command not found
@@ -29,145 +26,110 @@ PreToolUse hook error: scripts/check.sh: No such file or directory
 PostToolUse hook error: semgrep: command not found
 ```
 
-The plugin may be fine on macOS or Linux, but its hooks assume Unix tools, `.sh` scripts, or shell paths that Windows does not run directly.
+You installed a plugin. It works fine for everyone on a Mac. On your machine it
+greets you with red text every single time you open a session.
 
-## Quick Start
+Nothing is broken on your end. Almost every plugin is written and tested on
+macOS or Linux, so its hooks quietly assume Unix tools that Windows does not
+have. You are not supposed to fix that by hand. **win-hooks does it for you.**
 
-### Claude Code
+## Install it once, forget it exists
 
-Paste once:
+**Claude Code**
 
 ```bash
 claude plugin marketplace add LilMGenius/win-hooks && claude plugin install win-hooks
 ```
 
-That is the setup. No config, no flags, no manual patching.
-
-### Codex
-
-Paste once:
+**Codex**
 
 ```bash
 codex plugin marketplace add LilMGenius/win-hooks && codex plugin add win-hooks@win-hooks
 ```
 
-Codex uses its native `commandWindows` field, so the original cross-platform `command` stays intact.
+That's it. No config, no flags, nothing to remember. From then on win-hooks
+checks your plugins at the start of every session and repairs whatever broke —
+including plugins you install later, and plugins that break again after an
+update.
 
-### CLI (npm)
-
-Want a one-shot fix, or to run it in CI, without installing the plugin? Run it directly:
-
-```bash
-npx @lilmgenius/win-hooks         # repair installed Claude Code AND Codex plugin hooks
-npx @lilmgenius/win-hooks status  # show the last repair result
-```
-
-Windows only. It uses the same runtimes as the plugin — Git for Windows (Bash) and Node.js. Installed as a plugin, win-hooks also runs automatically every session; the CLI is for when you'd rather trigger it yourself.
-
-## What win-hooks Fixes
-
-win-hooks scans your installed Claude Code / Codex plugins and repairs Windows-incompatible hook commands before they keep breaking your session.
-
-It handles the common failure modes:
-
-- `.sh` scripts called directly from Windows
-- missing Unix-only commands such as `semgrep` or `shellcheck`
-- bare `node`, `python`, `python3`, `npx`, or `npm` commands that work in Git Bash but fail through Windows hook dispatch
-- Windows backslash paths inside hook commands
-- UTF-8 BOM, CRLF, invalid JSON, missing wrappers, and broken wrapper files
-- `python3` hooks blocked by the Microsoft Store Python alias
-
-Original plugin files are backed up where hooks are patched, and already-compatible plugins are skipped.
-
-## How It Stays Fixed
-
-win-hooks runs automatically at session start.
-
-Claude Code pipeline:
-
-```mermaid
-flowchart LR
-    A[scan plugins] --> B[patch hooks.json] --> C[normalize settings.json] --> D["verify & auto-repair"]
-```
-
-Codex pipeline:
-
-```mermaid
-flowchart LR
-    A[scan plugins] --> B["add commandWindows wrappers"] --> C["verify & auto-repair"]
-```
-
-Plugin updates are covered too. If an update replaces a repaired hook with a fresh broken one, win-hooks re-patches it at the next session start.
-
-It also checks again on your next prompt after a plugin update. Use `/reload-plugins` when you want the repaired hook config loaded without starting a new session.
-
-## Check Status
-
-The normal path is silent, so win-hooks writes a small heartbeat log:
+Prefer a one-shot fix, or need it in CI? Skip the plugin and run it directly:
 
 ```bash
-tail -n 5 ~/.claude/win-hooks/last-run.log
-tail -n 5 ~/.codex/win-hooks/last-run.log
+npx @lilmgenius/win-hooks           # repair every installed plugin, now
+npx @lilmgenius/win-hooks status    # show what it found last time
 ```
 
-- `phase=done` means the self-heal completed.
-- a lone `phase=start` means the run was cut off mid-way and should retry next session.
-- no file means it has not dispatched yet.
+## What it actually fixes
 
-You can also run:
-
-```text
-/win-hooks:status
-```
-
-## Commands
-
-| Command | Description |
+| The error you see | What was wrong | 
 |---|---|
-| `/win-hooks:status` | Show the current compatibility status of installed plugin hooks. |
-| `/win-hooks:fix` | Manually run the repair pipeline. Normally you should not need this. |
+| `check.sh: No such file or directory` | Windows can't run a `.sh` script directly |
+| `semgrep: command not found` | The plugin expects a Unix tool you don't have |
+| `'node' is not recognized` | Works in Git Bash, invisible to the process that launches hooks |
+| `Python was not found; ... Microsoft Store` | Windows' fake `python3` placeholder shadowing your real one |
+| `JSON Parse error: Unrecognized token` | An invisible byte (BOM) at the top of a config file |
+| `Cannot find module 'C:\Users...'` | Backslashes in a path getting eaten before the hook runs |
+
+Every repair is made next to the original file, never on top of it. The
+plugin's own files are backed up, and anything already working is left alone.
+
+## Staying fixed
+
+```mermaid
+flowchart LR
+    A[scan installed plugins] --> B[patch broken hooks] --> C[verify & auto-repair]
+```
+
+That runs at session start, and again on your next prompt if a plugin updated
+itself in the meantime — because an update reinstalls the plugin's original,
+still-broken hooks. When win-hooks re-patches mid-session it tells you to run
+`/reload-plugins`, which picks up the fix without restarting.
+
+Because the healthy path is silent, it also leaves a short log behind:
+
+```bash
+npx @lilmgenius/win-hooks status
+```
+
+Or, inside a session:
+
+| Command | What it does |
+|---|---|
+| `/win-hooks:status` | Show what's healthy, what's broken, and when it last ran |
+| `/win-hooks:fix` | Run the repair now, instead of waiting for the next session |
 
 ## Requirements
 
-- Windows 10/11
-- Claude Code / Codex
-- Git for Windows
-- Node.js available on PATH
+Windows 10/11, and [Git for Windows](https://git-scm.com/download/win) — which
+you almost certainly already have. Node.js comes with Claude Code and Codex.
 
-Claude Code already provides the Node.js runtime used by the Claude-side patch/verify flow. The Codex flow also uses `node` in `scripts/codex-find-incompatible` and `scripts/codex-verify`. Git for Windows provides the Bash runtime used to execute repaired hooks.
+## For the curious
 
-## Technical Notes
-
-For Claude Code, win-hooks creates a dedicated `_hooks/` directory inside each patched plugin. The original hook target stays untouched, and `hooks.json` points at a Windows-safe wrapper.
+win-hooks never edits a plugin's own scripts. It writes a small `_hooks/`
+directory next to them, containing one wrapper per broken hook plus a single
+`run-hook.cmd` — a file that is valid batch *and* valid shell at once, so
+Windows and Git Bash can each run the same entry point. The plugin's
+`hooks.json` is then pointed at the wrapper, with the original saved as
+`hooks.json.bak`.
 
 ```
 plugin/
 ├── hooks/
-│   ├── hooks.json
-│   └── hooks.json.bak
-├── _hooks/
-│   ├── run-hook.cmd
-│   └── <wrapper>
-└── scripts/
-    └── setup.sh
+│   ├── hooks.json          → now points at the wrapper
+│   └── hooks.json.bak      → your original, untouched
+└── _hooks/
+    ├── run-hook.cmd        → batch + shell polyglot entry point
+    └── check               → resolves the real interpreter, then execs
 ```
 
-The wrapper entry point is a polyglot `.cmd` file: Windows runs the batch portion, while Bash can run the shell portion. That keeps one repaired hook path usable across both Windows dispatch and Bash execution.
+Codex works the same way, with one difference: it has a native
+`commandWindows` field, so win-hooks *adds* the Windows command instead of
+replacing the portable one. Your plugins keep working unchanged on macOS and
+Linux.
 
-For Codex, win-hooks creates `_codex_hooks/` and adds `commandWindows` to incompatible hook entries:
+Wrapper filenames are deliberately extensionless (`check`, not `check.sh`) —
+Claude Code auto-prepends `bash` to anything containing `.sh` on Windows, which
+would undo the fix.
 
-```
-plugin/
-├── .codex-plugin/
-│   └── plugin.json
-├── hooks/
-│   ├── hooks.json
-│   └── hooks.json.codex-win-hooks.bak
-└── _codex_hooks/
-    ├── run-hook.cmd
-    └── <wrapper>
-```
-
-Codex keeps using the original `command` on macOS/Linux. On Windows it uses the generated `commandWindows` wrapper.
-
-Contributors can read [`CLAUDE.md`](CLAUDE.md) for the internal scanner, patcher, verifier, and case notes.
+Contributors: [`CLAUDE.md`](CLAUDE.md) documents every failure mode win-hooks
+handles, with the root cause behind each one.

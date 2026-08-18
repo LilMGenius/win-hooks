@@ -5,13 +5,16 @@
     "access": "public"
   },
   "description": "Auto-patches Claude Code and Codex plugin hooks for Windows compatibility. Fixes .sh scripts, missing binaries, Unix-only commands, and encoding issues that break hooks on Windows.",
+  "scripts": {
+    "test": "node test/run.mjs"
+  },
   "bin": {
     "win-hooks": "bin/win-hooks.mjs"
   },
   "files": [
     "bin/",
     "hooks/",
-    "scripts/",
+    "src/",
     "LICENSE",
     "README.md"
   ],

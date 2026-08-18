@@ -1,12 +1,12 @@
 {
-  "description": "win-hooks: Auto-patches Claude Code plugin hooks for Windows compatibility",
+  "description": "win-hooks: repairs Claude Code plugin hooks for Windows",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" patch-all",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" win-hooks heal",
             "timeout": 60000
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" reheal"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" win-hooks heal --changed-only"
           }
         ]
       }

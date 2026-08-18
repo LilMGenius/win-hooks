@@ -5,7 +5,7 @@
 // SSOT principle — see CLAUDE.md Conventions).
 //
 //   node scripts/sync-version           write package.json's version into the manifests
-//   node scripts/sync-version --check    exit 1 if any manifest disagrees (used by test/run.sh)
+//   node scripts/sync-version --check    exit 1 if any manifest disagrees (used by CI)
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

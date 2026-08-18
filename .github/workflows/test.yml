@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# win-hooks is Windows-only (the pipeline exits 0 off-Windows), so the suites
-# only mean anything on a Windows runner with Git Bash + Node.
+# win-hooks is Windows-only (it exits 0 off-Windows), so the suite only means
+# anything on a Windows runner.
 jobs:
   test:
     runs-on: windows-latest
@@ -17,10 +17,5 @@ jobs:
         with:
           node-version: 20
 
-      - name: Claude synthetic-fixture suite
-        shell: bash
-        run: bash test/run.sh
-
-      - name: Codex lane
-        shell: bash
-        run: bash test/codex-run.sh
+      - run: node test/run.mjs
+      - run: node scripts/sync-version --check
