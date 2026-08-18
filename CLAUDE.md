@@ -56,7 +56,7 @@ win-hooks runs inside every session it is meant to protect, so it fails to a no-
 
 1. **Fail-safe to no-op.** `hooks/win-hooks` exits 0 when `node` is absent; `bin/win-hooks.mjs` exits 0 off-Windows; every per-plugin repair is wrapped so one unreadable plugin never aborts the rest of the run; interpreter probes return `null` instead of throwing.
    - **Exception:** a missing *shipped* file (`hooks/run-hook.cmd`, an `src/` module) is an installation defect, not an environmental one — those fail loud, so a broken install is visible instead of silently doing nothing.
-2. **Do work once.** Interpreter probes are memoized per process. The `UserPromptSubmit` hot path (`--changed-only`) compares plugin `hooks.json` mtimes against a stamp and returns in a handful of `stat` calls when nothing changed (CASE-26).
+2. **Do work once.** Interpreter probes are memoized per process. Directory-level checks run once per install tree, not once per `hooks.json` — Codex declares one hooks file per event, so the two are not the same thing. The `UserPromptSubmit` hot path (`--changed-only`) stats a cached watch list and returns without enumerating anything when nothing changed (CASE-26).
 3. **Bounded work.** One pass per plugin, no unbounded loops, and every subprocess carries a timeout.
 4. **Stay quiet.** Never stdout on the happy path — a `UserPromptSubmit` hook's stdout is injected into the model's context. Progress goes to stderr; proof-of-run goes to disk (CASE-25).
 
@@ -72,7 +72,7 @@ Extend those instead of re-deriving the same probe or regex in a fifth place.
 
 ### State directory
 
-`~/.claude/win-hooks/` (`~/.codex/win-hooks/` for Codex) holds three files: `root` (this install's path, so the slash commands and skill can locate win-hooks without re-deriving it from `installed_plugins.json` — CASE-11), `stamp` (the mtime baseline for `--changed-only`), and `last-run.log` (the heartbeat).
+`~/.claude/win-hooks/` (`~/.codex/win-hooks/` for Codex) holds four files: `root` (this install's path, so the slash commands and skill can locate win-hooks without re-deriving it from `installed_plugins.json` — CASE-11), `stamp` (the mtime baseline for `--changed-only`), `seen.json` (the paths that baseline covers — CASE-26), and `last-run.log` (the heartbeat).
 
 ---
 
@@ -218,7 +218,9 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 ### CASE-26: Mid-session plugin update leaves patches un-restored until next session
 - **Symptom**: A plugin updated *within* a session (a `/plugin` bump, then `/reload-plugins`) reverts to an incompatible form and stays broken for the rest of the session. Running the fix by hand is the only remedy, and it recurs on every update.
 - **Root cause**: The only self-heal trigger was **SessionStart**, which fires once, before any mid-session update. `/plugin` overwrites the patched `hooks.json` afterwards (CASE-13), and `/reload-plugins` reloads config without re-firing SessionStart.
-- **Fix**: A second trigger closes it — a `UserPromptSubmit` hook running `heal --changed-only`. It compares installed plugins' `hooks.json` mtimes against `~/.claude/win-hooks/stamp` and returns immediately when nothing changed, so the per-prompt cost is a handful of `stat` calls. When something did change it runs the same single repair path as SessionStart and reports to stderr only, never stdout (a UserPromptSubmit hook's stdout is injected into the model's context). The stamp is written **last**, after every `hooks.json` the run rewrote, so a repair never re-triggers itself.
+- **Fix**: A second trigger closes it — a `UserPromptSubmit` hook running `heal --changed-only`.
+- **Cost**: The guard must not enumerate. Listing Claude's plugins parses a manifest; listing Codex's spawns `codex plugin list --json` and reads a manifest per plugin — far too much to pay on every prompt. So each full run writes `seen.json`, the paths its stamp covers: every `hooks.json` it scanned, their parent directories, and the host's registry (`installed_plugins.json` and `settings.json` for Claude, `config.toml` for Codex — Codex records every install, removal, and enable there). The guard stats that list and nothing else. An updated hook moves a file's mtime, an added or removed hook file moves its directory's, an installed or removed plugin moves the registry's; anything newer than the stamp triggers the real scan. A false positive costs one full heal, and there is no false negative, because nothing can change a `hooks.json` without moving one of the watched paths.
+- **Behavior**: When something did change it runs the same single repair path as SessionStart and reports to stderr only, never stdout (a UserPromptSubmit hook's stdout is injected into the model's context). The stamp is written **last**, after every `hooks.json` the run rewrote, so a repair never re-triggers itself.
 - **Note**: Like CASE-25 this is win-hooks' OWN infrastructure and adds **no issue type**. The guard heals the *disk*; the running session picks it up on `/reload-plugins` or next session (CASE-13).
 
 ---

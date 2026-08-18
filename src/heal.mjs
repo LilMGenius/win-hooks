@@ -7,10 +7,10 @@
 // failure degrades to a no-op rather than breaking the session it exists to
 // protect.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { newestMtime, writeText } from './env.mjs';
+import { newestMtime, readJson, writeJson, writeText } from './env.mjs';
 import { HOSTS } from './hosts.mjs';
 import { findIncompatible, patchAll } from './patch.mjs';
 import { fixSettings } from './settings.mjs';
@@ -43,19 +43,37 @@ function record(host, fields) {
   } catch { /* never fail a session over telemetry */ }
 }
 
-// Has any plugin's hooks.json changed since the last run? A plugin update
-// reinstalls hooks.json in its unpatched form (CASE-13), and SessionStart has
-// already fired by then; this is what lets the per-prompt guard re-heal
-// mid-session (CASE-26) while staying near-free when nothing changed.
-function changedSince(host, plugins) {
-  const stamp = stateFile(host, 'stamp');
-  if (!existsSync(stamp)) return true;
-  return newestMtime(plugins.map((p) => p.hooksFile)) > newestMtime([stamp]);
+// Can this run be skipped? A plugin update reinstalls hooks.json in its
+// unpatched form (CASE-13) after SessionStart has already fired, so the
+// per-prompt guard is what re-heals mid-session (CASE-26).
+//
+// The guard must not enumerate: listing Codex plugins costs a subprocess plus a
+// manifest read per plugin, far too much to pay on every prompt. So each full
+// run records what it watched, and the guard only stats that list:
+//
+//   every hooks.json seen  - an update rewriting one moves its mtime
+//   their parent dirs      - a hook file added or removed moves the dir's
+//   the host registry      - a plugin installed, removed, or enabled moves it
+//
+// Anything newer than the stamp means there may be work, and only then is the
+// real scan run. A false positive costs one full heal; there is no false
+// negative, since nothing can change a hooks.json without moving one of these.
+const watchList = (host, plugins) =>
+  [...new Set([...host.registry, ...plugins.flatMap((p) => [p.hooksFile, dirname(p.hooksFile)])])];
+
+function unchanged(host) {
+  const stamp = newestMtime([stateFile(host, 'stamp')]);
+  const watched = readJson(stateFile(host, 'seen.json'));
+  if (!stamp || !watched.ok || !Array.isArray(watched.data)) return false;
+  return newestMtime(watched.data) <= stamp;
 }
 
-const touchStamp = (host) => {
+// The stamp is written last, after every hooks.json this run rewrote, so a
+// repair never re-triggers itself on the next prompt.
+const commit = (host, plugins) => {
   try {
     mkdirSync(host.stateDir, { recursive: true });
+    writeJson(stateFile(host, 'seen.json'), watchList(host, plugins));
     writeFileSync(stateFile(host, 'stamp'), '');
   } catch { /* best effort */ }
 };
@@ -64,16 +82,14 @@ const touchStamp = (host) => {
 export function heal(hostId, { changedOnly = false } = {}) {
   const host = HOSTS[hostId];
   const started = Date.now();
+  if (changedOnly && unchanged(host)) return null;
+
   const plugins = host.listPlugins();
-
-  if (changedOnly && !changedSince(host, plugins)) return null;
-
   const { patched, failed } = patchAll(host, TEMPLATE_CMD, plugins);
   const settings = fixSettings(host.settingsFile, { fix: true });
   const { issues, fixes } = verify(host, { fix: true, templateCmd: TEMPLATE_CMD, plugins });
 
-  // Written last, so it post-dates every hooks.json this run just rewrote.
-  touchStamp(host);
+  commit(host, plugins);
   record(host, {
     dur: (Date.now() - started) + 'ms',
     plugins: plugins.length,

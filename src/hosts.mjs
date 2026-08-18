@@ -57,6 +57,9 @@ export const claude = {
   bakSuffix: '.bak',
   stateDir: join(HOME, '.claude/win-hooks'),
   settingsFile: join(HOME, '.claude/settings.json'),
+  // Files that change when the plugin set does. The per-prompt guard stats
+  // these to rule out work without enumerating anything (CASE-26).
+  registry: [join(HOME, '.claude/plugins/installed_plugins.json'), join(HOME, '.claude/settings.json')],
   listPlugins: listClaudePlugins,
   // Claude replaces the command outright, so an already-patched hook is one
   // that already points at our wrapper - which isIncompatible sees as a .cmd.
@@ -102,6 +105,9 @@ export const codex = {
   bakSuffix: '.codex-win-hooks.bak',
   stateDir: join(HOME, '.codex/win-hooks'),
   settingsFile: null,
+  // Codex records every install, removal, enable, and marketplace update in
+  // config.toml, so one stat covers the whole plugin set.
+  registry: [join(HOME, '.codex/config.toml')],
   listPlugins: listCodexPlugins,
   // A hook that already carries commandWindows is patched; leave the portable
   // command alone so it still runs natively on macOS and Linux.

@@ -84,10 +84,25 @@ function makeSandbox() {
           pluginId: name + '@test', name, installed: true, enabled: true,
           source: { path },
         });
-        writeFileSync(join(dir, 'codex.cmd'),
-          '@echo off\r\necho ' + JSON.stringify({ installed: codexPlugins }).replace(/"/g, '^"') + '\r\n');
+        // Also counts its own invocations, so a test can prove that the
+        // --changed-only hot path enumerates nothing (CASE-26).
+        writeFileSync(join(dir, 'codex.cmd'), [
+          '@echo off',
+          'echo call>>"' + join(dir, 'codex-calls.log') + '"',
+          'echo ' + JSON.stringify({ installed: codexPlugins }).replace(/"/g, '^"'),
+          '',
+        ].join('\r\n'));
       }
       return path;
+    },
+
+    // How many times Codex plugin enumeration shelled out.
+    codexCalls() {
+      try {
+        return read(join(dir, 'codex-calls.log')).split('\n').filter(Boolean).length;
+      } catch {
+        return 0;
+      }
     },
 
     // Run the real CLI against this sandbox.

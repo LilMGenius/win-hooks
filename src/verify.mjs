@@ -20,59 +20,59 @@ const listFiles = (dir) => {
 
 const baseName = (file) => file.split(/[\\/]/).pop();
 
-// Everything win-hooks may have generated or must keep clean for this plugin.
-const hookFiles = (plugin, wrapperDir) =>
-  [...listFiles(join(plugin.installPath, 'hooks')), ...listFiles(wrapperDir)];
-
 const readOrNull = (file) => {
   try { return readText(file); } catch { return null; }
 };
 
 // Recover the pre-patch command for a wrapper by replaying the naming rule over
-// the backup. That is what lets a deleted wrapper be rebuilt exactly (CASE-16).
-function originalCommandFor(host, plugin, wrapper) {
-  const bak = readJson(plugin.hooksFile + host.bakSuffix);
-  if (!bak.ok) return null;
-  for (const { hook } of eachHook(bak.data)) {
-    const command = hook.command;
-    if (command && wrapperName(command, host.rootVar) === wrapper) return command;
+// the backups. That is what lets a deleted wrapper be rebuilt exactly (CASE-16).
+function originalCommandFor(host, hooksFiles, wrapper) {
+  for (const file of hooksFiles) {
+    const bak = readJson(file + host.bakSuffix);
+    if (!bak.ok) continue;
+    for (const { hook } of eachHook(bak.data)) {
+      const command = hook.command;
+      if (command && wrapperName(command, host.rootVar) === wrapper) return command;
+    }
   }
   return null;
 }
 
-// Every file whose encoding matters: the plugin's own hook dirs plus anything
-// hooks.json points at, so a wrapper parked in a nonstandard subdir (scripts/)
-// is not missed.
-function encodingCandidates(host, plugin, wrapperDir) {
-  const files = new Set([plugin.hooksFile, ...hookFiles(plugin, wrapperDir)]);
-  const raw = readOrNull(plugin.hooksFile);
-  if (raw) {
-    const re = new RegExp('\\$\\{?' + host.rootVar + '\\}?/([A-Za-z0-9_./-]+)', 'g');
-    for (const m of raw.matchAll(re)) files.add(join(plugin.installPath, m[1]));
+// Every file in one install whose encoding matters: the hook directories, plus
+// anything a hooks.json points at, so a wrapper parked in a nonstandard subdir
+// (scripts/) is not missed.
+function encodingCandidates(host, install, dirFiles) {
+  const files = new Set([...install.hooksFiles, ...dirFiles]);
+  const re = new RegExp('\\$\\{?' + host.rootVar + '\\}?/([A-Za-z0-9_./-]+)', 'g');
+  for (const raw of install.hooksFiles.map(readOrNull)) {
+    for (const m of (raw || '').matchAll(re)) files.add(join(install.path, m[1]));
   }
   return [...files].filter((f) => !/\.bak$|\.tmp$/.test(f) && existsSync(f));
 }
 
-// Check one plugin. `report` records an issue; `repair` runs only with --fix and
-// records what it did.
-function checkPlugin(host, plugin, report, repair) {
-  const wrapperDir = join(plugin.installPath, host.wrapperDir);
-  const rel = (file) => file.replace(plugin.installPath, '').replace(/^[\\/]/, '').replace(/\\/g, '/');
+// Directory-level checks, run once per install tree. A Codex plugin declares
+// one hooks.json per event, so this is where re-scanning the same directory
+// dozens of times would otherwise come from.
+function checkTree(host, install, report, repair) {
+  const wrapperDir = join(install.path, host.wrapperDir);
+  const rel = (file) => file.replace(install.path, '').replace(/^[\\/]/, '').replace(/\\/g, '/');
+  const dirFiles = [...listFiles(join(install.path, 'hooks')), ...listFiles(wrapperDir)];
 
   // ── Encoding (CASE-01/02/03) ──────────────────────────────────────
-  for (const file of encodingCandidates(host, plugin, wrapperDir)) {
+  for (const file of encodingCandidates(host, install, dirFiles)) {
     if (hasBom(file)) {
       report('bom', rel(file));
       repair(() => { sanitize(file); return 'stripped BOM from ' + rel(file); });
     }
-    if (file === plugin.hooksFile && hasCrlf(file)) {
-      report('json_crlf', 'CRLF line endings');
-      repair(() => { sanitize(file); return 'normalized CRLF in ' + rel(file); });
-    }
+  }
+  for (const file of install.hooksFiles) {
+    if (!hasCrlf(file)) continue;
+    report('json_crlf', 'CRLF line endings');
+    repair(() => { sanitize(file); return 'normalized CRLF in ' + rel(file); });
   }
 
   // ── Wrapper bodies ────────────────────────────────────────────────
-  for (const file of hookFiles(plugin, wrapperDir)) {
+  for (const file of dirFiles) {
     const name = baseName(file);
     if (name === 'run-hook.cmd') continue;
     const body = readOrNull(file);
@@ -91,17 +91,20 @@ function checkPlugin(host, plugin, report, repair) {
     }
 
     // CASE-24: the wrapper execs a target that cannot exist.
-    const broken = brokenWrapperTarget(body, plugin.installPath, existsSync);
+    const broken = brokenWrapperTarget(body, install.path, existsSync);
     if (!broken) continue;
     report('wrapper_broken', rel(file) + ' execs an invalid target: ' + broken.rel);
     repair(() => {
-      const original = originalCommandFor(host, plugin, name);
+      const original = originalCommandFor(host, install.hooksFiles, name);
       writeText(file, original ? wrapperBody(original, host.rootVar) : passthroughBody());
       return 'repaired wrapper ' + rel(file);
     });
   }
+}
 
-  // ── hooks.json integrity + wrapper presence ───────────────────────
+// Per-hooks.json checks: is it parseable, and does every wrapper it names exist?
+function checkHooksFile(host, install, plugin, report, repair) {
+  const wrapperDir = join(install.path, host.wrapperDir);
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return report('json_invalid', error);
 
@@ -127,7 +130,7 @@ function checkPlugin(host, plugin, report, repair) {
       // An older patch form forwarded the real target as a trailing argument;
       // run-hook.cmd passes it through, so a passthrough body is correct there.
       const forwarded = relPath(rest, host.rootVar);
-      const original = forwarded ? null : originalCommandFor(host, plugin, wrapper);
+      const original = forwarded ? null : originalCommandFor(host, install.hooksFiles, wrapper);
       if (!forwarded && !original) return 'could not rebuild ' + wrapper + ' (no usable backup)';
       mkdirSync(wrapperDir, { recursive: true });
       writeText(join(wrapperDir, wrapper), forwarded ? passthroughBody() : wrapperBody(original, host.rootVar));
@@ -150,20 +153,45 @@ export function verify(host, { fix = false, templateCmd = null, plugins = host.l
   const issues = [];
   const fixes = [];
 
-  for (const plugin of plugins) {
-    const report = (type, detail) => issues.push({ plugin: plugin.id, path: plugin.installPath, type, detail });
-    const repair = (action) => {
-      if (!fix) return;
-      let done;
-      try { done = action(templateCmd); } catch (e) { done = 'repair failed: ' + e.message; }
-      if (done) fixes.push(done);
+  for (const install of byInstall(plugins)) {
+    const record = (plugin) => ({
+      report: (type, detail) => issues.push({ plugin: plugin.id, path: install.path, type, detail }),
+      repair: (action) => {
+        if (!fix) return;
+        let done;
+        try { done = action(templateCmd); } catch (e) { done = 'repair failed: ' + e.message; }
+        if (done) fixes.push(done);
+      },
+    });
+
+    const guard = (plugin, run) => {
+      const { report, repair } = record(plugin);
+      try {
+        run(report, repair);
+      } catch (e) {
+        report('json_invalid', 'could not inspect plugin: ' + e.message);
+      }
     };
-    try {
-      checkPlugin(host, plugin, report, repair);
-    } catch (e) {
-      report('json_invalid', 'could not inspect plugin: ' + e.message);
+
+    guard(install.plugins[0], (report, repair) => checkTree(host, install, report, repair));
+    for (const plugin of install.plugins) {
+      guard(plugin, (report, repair) => checkHooksFile(host, install, plugin, report, repair));
     }
   }
 
   return { issues, fixes };
+}
+
+// Codex declares one hooks.json per event, so many "plugins" share one install
+// tree. Group them, or every directory-level check runs once per hooks file.
+function byInstall(plugins) {
+  const trees = new Map();
+  for (const plugin of plugins) {
+    const tree = trees.get(plugin.installPath)
+      || { path: plugin.installPath, plugins: [], hooksFiles: [] };
+    tree.plugins.push(plugin);
+    tree.hooksFiles.push(plugin.hooksFile);
+    trees.set(plugin.installPath, tree);
+  }
+  return [...trees.values()];
 }

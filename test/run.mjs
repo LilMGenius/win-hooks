@@ -130,6 +130,22 @@ test('--changed-only skips when no plugin hooks changed', (sb) => {
   assert(out.trim() === '', 'the hot path should be silent, got: ' + out);
 });
 
+test('CASE-26: the hot path enumerates nothing when nothing changed', (sb) => {
+  sb.install('case-07-sh-script', 'cost', 'codex');
+  sb.run('heal', 'codex');
+  const before = sb.codexCalls();
+  sb.run('heal', 'codex', '--changed-only');
+  assert(sb.codexCalls() === before, 'the guard must not shell out to enumerate plugins');
+});
+
+test('CASE-26: the hot path still heals a newly installed plugin', (sb) => {
+  sb.install('case-07-sh-script', 'first');
+  sb.run('heal', 'claude');
+  const plugin = sb.install('case-16-wrapper-missing', 'second');
+  sb.run('heal', 'claude', '--changed-only');
+  assert(existsSync(join(plugin, '_hooks/my-hook')), 'a plugin installed after the stamp should still be healed');
+});
+
 // ── Codex ─────────────────────────────────────────────────────────────
 //
 // Codex keeps the portable `command` and adds `commandWindows`. This guards
