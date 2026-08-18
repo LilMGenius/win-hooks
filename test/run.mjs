@@ -3,9 +3,9 @@
 //
 //   node test/run.mjs
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addBom, assert, assertContains, assertLacks, read, summarize, test, toCrlf } from './harness.mjs';
+import { addBom, assert, assertContains, assertLacks, read, REPO, summarize, test, toCrlf } from './harness.mjs';
 import { isIncompatible, wrapperName } from '../src/rules.mjs';
 
 const healthy = (sb, host) => {
@@ -36,6 +36,20 @@ test('CASE-09: bare python3 is always wrapped, even with a path argument', () =>
 test('wrapper names are extensionless and derived from the target', () => {
   assert(wrapperName('bash ' + R + '/hooks/my_hook.sh', 'CLAUDE_PLUGIN_ROOT') === 'my-hook', 'underscore -> dash, no extension');
   assert(wrapperName('tool mcp -k inject-defaults', 'CLAUDE_PLUGIN_ROOT') === 'inject-defaults', 'keyed invocation names itself');
+});
+
+// win-hooks' own manifests are the one thing it cannot repair for itself: a
+// broken one means the engine never dispatches. `timeout` is in SECONDS for
+// both hosts, and shipped once as 60000 - not a wider safety margin but the
+// absence of one, since a hung run would have hung the session for 16 hours.
+test('the shipped hook manifests declare timeouts in seconds', () => {
+  for (const name of ['hooks/hooks.json', 'hooks/codex-hooks.json']) {
+    const raw = readFileSync(join(REPO, name), 'utf8');
+    assert(!raw.startsWith('\uFEFF'), name + ' must not carry a BOM');
+    for (const [, value] of raw.matchAll(/"timeout":\s*(\d+)/g)) {
+      assert(Number(value) <= 600, name + ' timeout ' + value + ' is not seconds');
+    }
+  }
 });
 
 // ── Claude Code pipeline ──────────────────────────────────────────────

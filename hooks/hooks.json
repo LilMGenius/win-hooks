@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" win-hooks heal",
-            "timeout": 60000
+            "timeout": 60
           }
         ]
       }
