@@ -182,6 +182,13 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Known gap**: a plugin that is already fully compatible never re-enters the setup step, so its `run-hook.cmd` stays at whatever version it was patched with. Closing that would need a `verify` staleness check comparing the copy against the template — not added; an opt-in env var doesn't yet justify a new issue type.
 - **Considered and rejected**: replacing the `%2 %3 ... %9` argument forwarding (capped at 8 extra args) with `shift` + `%*`. Verified empirically that cmd.exe's `%*` does **not** reflect `shift` — it always yields the original full list — so the cap is left as a known, narrow limitation rather than risking an unverified batch rewrite for a case with no observed occurrence.
 
+### CASE-29: PATH `bash` is WSL, which swallows every hook and reports success
+- **Symptom**: none visible — that is the entire problem. On a machine with WSL but no Git for Windows, every patched hook would appear to run and do nothing, forever.
+- **Root cause**: `run-hook.cmd`'s last resort is whatever `bash.exe` is on `PATH`. On stock Windows that is `%SystemRoot%\System32\bash.exe`, the WSL launcher. It cannot open a Windows path (`C:\x\y` reaches the guest as `C:xy`) **and it exits 0 on that failure**, so cmd.exe sees success. This was latent in the original file too — the rewrite that collapsed four dispatch lines into one resolved variable is what made it visible.
+- **Fix**: the PATH candidate must prove it can see the script it is about to run — `bash -c 'test -f "$WH_PROBE"'` — before being used, matching the CASE-09 doctrine that an interpreter counts only if it actually runs. The override and the two Git for Windows paths are known-good and skip the probe, so the common path stays subprocess-free. A candidate that fails prints one stderr line and exits 0: still fail-safe, no longer silent.
+- **Detail**: the probe path travels through the environment, not as `$0`. Passing it as `$0` makes WSL's launcher report `$0` as `/bin/bash`, so `test -f` passes and the probe would accept the very interpreter it exists to reject.
+- **Rejected**: blacklisting `System32\bash.exe` and `WindowsApps\bash.exe` by path. Cheaper, but a path heuristic — the exact thing CASE-09 forbids — and it would still accept a broken bash anywhere else.
+
 ### CASE-21: Python not installed
 - **Symptom**: JSON validation and verification used to fail when Python was the only available runtime.
 - **Fix**: The Python dependency is gone entirely. Node parses the JSON, and BOM/CRLF normalization is pure Node. Python is now only ever a *target* to be wrapped, never a tool win-hooks depends on.
