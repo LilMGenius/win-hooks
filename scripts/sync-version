@@ -2,7 +2,7 @@
 // win-hooks: scripts/sync-version
 // Single source of truth for the version = package.json "version". Propagates
 // it into the plugin manifests so the four copies never drift (win-hooks' own
-// SSOT principle — see CLAUDE.md Conventions).
+// SSOT principle — see AGENTS.md Conventions).
 //
 //   node scripts/sync-version           write package.json's version into the manifests
 //   node scripts/sync-version --check    exit 1 if any manifest disagrees (used by CI)

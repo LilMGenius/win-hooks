@@ -2,7 +2,7 @@
 // wrapper that replaces them, and what that wrapper contains.
 //
 // This is the one module worth reading to understand win-hooks; everything else
-// is plumbing. Each rule maps to a CASE in CLAUDE.md.
+// is plumbing. Each rule maps to a CASE in AGENTS.md.
 
 import { resolvePython } from './env.mjs';
 

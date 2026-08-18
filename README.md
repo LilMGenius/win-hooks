@@ -114,7 +114,7 @@ Codex works the same way, with one difference: it has a native `commandWindows` 
 
 Wrapper filenames are deliberately extensionless (`check`, not `check.sh`) — Claude Code auto-prepends `bash` to anything containing `.sh` on Windows, which would undo the fix.
 
-Contributors: [`CLAUDE.md`](CLAUDE.md) documents every failure mode win-hooks handles, with the root cause behind each one.
+Contributors: [`AGENTS.md`](AGENTS.md) documents every failure mode win-hooks handles, with the root cause behind each one.
 
 ## License
 

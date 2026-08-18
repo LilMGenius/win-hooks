@@ -2,7 +2,7 @@
 // fixture plugin, so a run never touches real machine state.
 //
 // Coverage is derived, never asserted: a test name carries the CASE-NN it
-// covers, CLAUDE.md carries the CASEs that exist, and `summarize` compares the
+// covers, AGENTS.md carries the CASEs that exist, and `summarize` compares the
 // two. Adding a CASE section without a test fails the suite.
 
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,9 +32,9 @@ export function test(name, body) {
   }
 }
 
-// Every CASE documented in CLAUDE.md, in document order.
+// Every CASE documented in AGENTS.md, in document order.
 const documentedCases = () =>
-  [...read(join(REPO, 'CLAUDE.md')).matchAll(/^### (CASE-\d\d)/gm)].map((m) => m[1]);
+  [...read(join(REPO, 'AGENTS.md')).matchAll(/^### (CASE-\d\d)/gm)].map((m) => m[1]);
 
 // `waived` maps a CASE to why no test can prove it. A reason is mandatory: an
 // untestable CASE is a claim about the world, and a claim has to be written

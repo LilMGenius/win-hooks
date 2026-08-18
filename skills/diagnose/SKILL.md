@@ -18,7 +18,7 @@ Two structural causes explain nearly every hook failure on Windows: plugins
 ship `.sh` scripts cmd.exe cannot run, and they invoke bare Unix commands or
 interpreters that are not resolvable when the hook launches. The remedy is
 always **`/win-hooks:fix`** — the tables below exist to identify *what* is
-being seen. Root-cause write-ups live in [`CLAUDE.md`](../../CLAUDE.md) as CASE-NN.
+being seen. Root-cause write-ups live in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
 
 ## Recognizing the error
 
