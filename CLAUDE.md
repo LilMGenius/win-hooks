@@ -78,11 +78,13 @@ Extend those instead of re-deriving the same probe or regex in a fifth place.
 
 ## Testing
 
-`node test/run.mjs` (or `npm test`) — 19 tests in under four seconds, on every change to the scanner, patcher, or verifier.
+`node test/run.mjs` (or `npm test`) on every change to the scanner, patcher, or verifier. The run prints its own test count and coverage percentage; both are derived at run time, so no number written here can go stale.
 
 Two layers. Pure unit tests exercise `src/rules.mjs` directly, since that is where the domain decisions live. End-to-end tests install a synthetic fixture into a sandbox with a private `$HOME` and drive the real `heal` pipeline, so a test run can never touch this repo's or this machine's real plugins. `test/harness.mjs` holds the sandbox and assertions; the Codex lane additionally generates a fake `codex.cmd` on `PATH`, because Codex plugin enumeration shells out to `codex plugin list --json`.
 
 One fixture per CASE lives in `test/fixtures/`. A new CASE gets a fixture and a test in the same commit as the fix.
+
+Coverage is measured against this file. The runner reads every `### CASE-NN` heading below and matches it against the CASE-NNs named in passing tests; an uncovered CASE fails the run. A CASE that no test can exercise — CASE-14 is a work principle, not a code path — must be listed in the waiver map at the top of `test/harness.mjs` with a written reason, and a waiver that is no longer needed fails the run as stale.
 
 ---
 
