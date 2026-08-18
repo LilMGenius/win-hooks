@@ -78,7 +78,7 @@ Extend those instead of re-deriving the same probe or regex in a fifth place.
 
 ## Testing
 
-`node test/run.mjs` (or `npm test`) — 16 tests in roughly four seconds, on every change to the scanner, patcher, or verifier.
+`node test/run.mjs` (or `npm test`) — 19 tests in under four seconds, on every change to the scanner, patcher, or verifier.
 
 Two layers. Pure unit tests exercise `src/rules.mjs` directly, since that is where the domain decisions live. End-to-end tests install a synthetic fixture into a sandbox with a private `$HOME` and drive the real `heal` pipeline, so a test run can never touch this repo's or this machine's real plugins. `test/harness.mjs` holds the sandbox and assertions; the Codex lane additionally generates a fake `codex.cmd` on `PATH`, because Codex plugin enumeration shells out to `codex plugin list --json`.
 

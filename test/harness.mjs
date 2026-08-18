@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 export const REPO = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-export const FIXTURES = join(REPO, 'test/fixtures');
-export const CLI = join(REPO, 'bin/win-hooks.mjs');
+const FIXTURES = join(REPO, 'test/fixtures');
+const CLI = join(REPO, 'bin/win-hooks.mjs');
 
 const results = [];
 

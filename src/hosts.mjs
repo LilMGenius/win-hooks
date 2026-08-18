@@ -49,7 +49,7 @@ function listClaudePlugins() {
   });
 }
 
-export const claude = {
+const claude = {
   id: 'claude',
   label: 'Claude Code',
   rootVar: 'CLAUDE_PLUGIN_ROOT',
@@ -97,7 +97,7 @@ function listCodexPlugins() {
   });
 }
 
-export const codex = {
+const codex = {
   id: 'codex',
   label: 'Codex',
   rootVar: 'PLUGIN_ROOT',

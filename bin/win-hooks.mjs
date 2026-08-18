@@ -14,7 +14,7 @@
 
 import { isWindows } from '../src/env.mjs';
 import { HOSTS } from '../src/hosts.mjs';
-import { heal, inspect, readLog } from '../src/heal.mjs';
+import { heal, inspect } from '../src/heal.mjs';
 
 const USAGE = 'usage: win-hooks [heal|status] [claude|codex] [--changed-only]';
 

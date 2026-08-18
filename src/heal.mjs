@@ -16,8 +16,8 @@ import { findIncompatible, patchAll } from './patch.mjs';
 import { fixSettings } from './settings.mjs';
 import { verify } from './verify.mjs';
 
-export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-export const TEMPLATE_CMD = join(ROOT, 'hooks/run-hook.cmd');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const TEMPLATE_CMD = join(ROOT, 'hooks/run-hook.cmd');
 
 const stateFile = (host, name) => join(host.stateDir, name);
 
@@ -116,7 +116,7 @@ export function inspect(hostId) {
   };
 }
 
-export function readLog(host, lines = 5) {
+function readLog(host, lines = 5) {
   try {
     return readFileSync(stateFile(host, 'last-run.log'), 'utf8').trim().split('\n').slice(-lines);
   } catch {

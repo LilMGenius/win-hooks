@@ -7,7 +7,7 @@
 import { resolvePython } from './env.mjs';
 
 // Hook commands are stored JSON-escaped; recover the shell command as written.
-export const decode = (cmd) => String(cmd || '').replace(/\\"/g, '"');
+const decode = (cmd) => String(cmd || '').replace(/\\"/g, '"');
 
 const head = (cmd) =>
   decode(cmd).trim().split(/\s+/)[0].replace(/^["']|["']$/g, '').replace(/\\/g, '');

@@ -133,3 +133,14 @@ would undo the fix.
 
 Contributors: [`CLAUDE.md`](CLAUDE.md) documents every failure mode win-hooks
 handles, with the root cause behind each one.
+
+## Privacy
+
+win-hooks runs entirely on your machine and sends nothing anywhere. No
+telemetry, no network calls, no account. The only thing it writes outside a
+plugin's own folder is a short local log of its own runs, so you can check it
+actually ran.
+
+## License
+
+[MIT](LICENSE).
