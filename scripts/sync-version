@@ -15,26 +15,37 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const check = process.argv.includes('--check');
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 
-// Each target: file path + how to read/set its version (marketplace nests it).
+// Where each manifest keeps its version. marketplace.json nests it one level down.
 const targets = [
-  { rel: '.claude-plugin/plugin.json', get: (d) => d.version, set: (d, v) => { d.version = v; } },
-  { rel: '.codex-plugin/plugin.json', get: (d) => d.version, set: (d, v) => { d.version = v; } },
-  { rel: '.claude-plugin/marketplace.json', get: (d) => d.plugins?.[0]?.version, set: (d, v) => { d.plugins[0].version = v; } },
+  { rel: '.claude-plugin/plugin.json', get: (d) => d.version },
+  { rel: '.codex-plugin/plugin.json', get: (d) => d.version },
+  { rel: '.claude-plugin/marketplace.json', get: (d) => d.plugins?.[0]?.version },
 ];
+
+// Edit the version string in place rather than re-serializing the parsed object:
+// JSON.stringify would rewrite every line it disagrees with about formatting, so
+// a version bump would carry unrelated reflow noise into the release diff. Each
+// manifest holds exactly one version field, and an unexpected count is a
+// structural change, not something to guess at.
+const VERSION_FIELD = /("version"[ ]*:[ ]*")[^"]+(")/g;
 
 let drift = 0;
 for (const t of targets) {
   const path = join(ROOT, t.rel);
-  const data = JSON.parse(readFileSync(path, 'utf8'));
-  const current = t.get(data);
+  const text = readFileSync(path, 'utf8');
+  const current = t.get(JSON.parse(text));
   if (current === version) continue;
   if (check) {
     console.error(`version drift: ${t.rel} is ${current}, package.json is ${version}`);
     drift++;
     continue;
   }
-  t.set(data, version);
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+
+  const matches = text.match(VERSION_FIELD) || [];
+  if (matches.length !== 1) throw new Error(`${t.rel}: expected 1 version field, found ${matches.length}`);
+  const next = text.replace(VERSION_FIELD, `$1${version}$2`);
+  if (t.get(JSON.parse(next)) !== version) throw new Error(`${t.rel}: rewrite did not take`);
+  writeFileSync(path, next);
   console.log(`synced ${t.rel} -> ${version}`);
 }
 

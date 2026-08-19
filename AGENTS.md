@@ -84,6 +84,8 @@ Two layers. Pure unit tests exercise `src/rules.mjs` directly, since that is whe
 
 One fixture per CASE lives in `test/fixtures/`. A new CASE gets a fixture and a test in the same commit as the fix.
 
+**Deliberate absence:** no integration lane clones real plugins as fixtures. It would buy a network dependency and fixtures that break when an upstream plugin changes, to re-prove what a synthetic fixture already proves — every real failure this repo has seen reduced to one. Reproduce the shape, not the plugin.
+
 Coverage is measured against this file. The runner reads every `### CASE-NN` heading below and matches it against the CASE-NNs named in passing tests; an uncovered CASE fails the run. A CASE that no test can exercise — CASE-14 is a work principle, not a code path — must be listed in the waiver map at the top of `test/harness.mjs` with a written reason, and a waiver that is no longer needed fails the run as stale.
 
 ---

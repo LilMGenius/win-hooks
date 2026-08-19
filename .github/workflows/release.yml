@@ -1,0 +1,80 @@
+name: release
+
+# Tagging is the manual step; everything after it belongs here. A release run
+# publishes with a provenance attestation, which a hand-run `npm publish`
+# cannot produce - so the tag push is the only way to ship.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag is a claim about the tree. Check it before anything is published,
+  # because a version mismatch is unfixable once it is on the registry.
+  verify:
+    runs-on: windows-latest   # win-hooks exits 0 off-Windows, so only Windows proves it
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # No dependencies and no lockfile: nothing to install.
+      - name: tag matches package.json
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          echo "tag=$tag package.json=$pkg"
+          [ "$tag" = "$pkg" ] || { echo "::error::tag $tag != package.json $pkg"; exit 1; }
+
+      - run: node scripts/sync-version --check
+      - run: node test/run.mjs
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest    # provenance requires a GitHub-hosted runner
+    permissions:
+      contents: read
+      id-token: write         # mints the OIDC token npm signs the provenance with
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # creating the release page writes to the repo
+    steps:
+      - uses: actions/checkout@v4
+
+      # The CHANGELOG entry is the release notes; keeping one copy means the
+      # release page cannot drift from the file in the tree.
+      - name: extract this version's changelog section
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '
+            $0 ~ "^## " v "( |$)" {found=1; next}
+            found && /^## /                {exit}
+            found                          {print}
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::no CHANGELOG section for $v"; exit 1; }
+          cat notes.md
+
+      - name: publish the release page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "win-hooks ${GITHUB_REF_NAME#v}" --notes-file notes.md

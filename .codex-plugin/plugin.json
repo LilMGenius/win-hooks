@@ -1,6 +1,6 @@
 {
   "name": "win-hooks",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Auto-patches Codex plugin hooks for Windows compatibility by adding commandWindows wrappers.",
   "author": {
     "name": "LilMGenius",
