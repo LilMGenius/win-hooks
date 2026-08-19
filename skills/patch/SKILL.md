@@ -10,16 +10,17 @@ description: |
   - "fix hooks", "patch hooks", "훅 수정", "플러그인 호환성" requests
   - Any hook-related error message on Windows (win32)
   Do NOT use on macOS or Linux, where hooks work natively.
+argument-hint: Optional host to check (claude or codex; omit for both)
+allowed-tools: ["Bash", "Read"]
 ---
 
-# win-hooks
+# Patch Windows Plugin Hooks
 
 Two structural causes explain nearly every hook failure on Windows: plugins
 ship `.sh` scripts cmd.exe cannot run, and they invoke bare Unix commands or
 interpreters that are not resolvable when the hook launches. The remedy is
-always **`/win-hooks:patch`**, which looks first and repairs what it finds; the
-tables below exist to identify *what* is being seen. Root-cause write-ups live
-in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
+always the one command below; the tables exist to identify *what* is being
+seen. Root-cause write-ups live in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
 
 ## Recognizing the error
 
@@ -38,30 +39,57 @@ in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
 BOM-corrupted polyglot wrapper (CASE-01); `'node'...내부 또는 외부 명령` is a bare
 interpreter in settings.json (CASE-23).
 
-## Diagnosing and fixing
+## Run it
 
-1. Confirm the platform is `win32`. Otherwise this skill does not apply.
-2. Run **`/win-hooks:patch`**. It reports, repairs whatever is not healthy, and
-   re-reports to prove the result. Its issue-type table is the closed vocabulary
-   ([`commands/patch.md`](../../commands/patch.md)): `incompatible`, `bom`,
-   `json_crlf`, `json_invalid`, `wrapper_missing`, `wrapper_broken`,
-   `cmd_missing`, `recursive_wrapper`, `python3_stub`, `backslash_path`,
-   `bare_command`.
-3. Without the slash command, the same work is `node "$(cat ~/.claude/win-hooks/root)/bin/win-hooks.mjs" patch`; if
-   `~/.claude/win-hooks/root` is missing win-hooks has never run, so use
-   `npx @lilmgenius/win-hooks patch` instead.
-4. Report as a table: `Plugin | Issue | Detail`.
+Confirm the platform is `win32` first. On macOS and Linux there is nothing to
+repair and this skill does not apply.
 
-The repair lands on disk, but a running session has already cached its hook
-config - it applies on `/reload-plugins` or in the next session (CASE-13).
+```bash
+node "$(cat ~/.claude/win-hooks/root)/bin/win-hooks.mjs" patch $ARGUMENTS
+```
 
-## Is the self-heal firing?
+`$ARGUMENTS` is optionally `claude` or `codex`; with neither, both are done.
+The `root` file is written by win-hooks on every run. If it is missing,
+win-hooks has never run - use `npx @lilmgenius/win-hooks patch` instead.
 
-The `last runs` block of the report is the heartbeat. win-hooks heals at every
-SessionStart, and again on the next prompt after a plugin's hooks change
-(CASE-26). If a plugin keeps reverting yet a manual repair works, check there: no
-lines at all means the hook never dispatched - the plugin is disabled, Git Bash
-is missing, or Node is not on PATH.
+One command does the whole job. The engine reports what it found, repairs
+anything that is not healthy, and re-reports to prove the result, so there is
+nothing to run first and no second command to decide about. A healthy host is
+reported and left alone; repeating the command changes nothing.
+
+## Read the output
+
+Each host section lists how many hook files were scanned, then one line per
+problem. A section headed `after repair` is the proof pass. `healthy` means
+there is nothing left to do. The line prefixes are a closed vocabulary:
+
+| Line prefix | Meaning |
+|---|---|
+| `incompatible` | A hook that needs patching but has not been patched yet |
+| `bom` | A UTF-8 BOM in a hook file (breaks JSON, shebangs, and cmd.exe) |
+| `json_crlf` | CRLF line endings in hooks.json |
+| `json_invalid` | hooks.json is not parseable |
+| `wrapper_missing` | A patched hook points at a wrapper that no longer exists |
+| `wrapper_broken` | A wrapper execs a target that cannot exist |
+| `cmd_missing` | run-hook.cmd is gone from the wrapper directory |
+| `recursive_wrapper` | A wrapper calls an interpreter on itself and loops |
+| `python3_stub` | A python hook with no working interpreter installed |
+| `backslash_path` | A settings.json hook command with Windows backslash paths |
+| `bare_command` | A settings.json hook command cmd.exe cannot resolve |
+
+The `last runs` block is the heartbeat. The happy path is silent, so this is
+how to tell "healed successfully" apart from "never ran": each line records the
+duration, how many plugins were scanned, and how many were patched or repaired.
+win-hooks heals at every SessionStart, and again on the next prompt after a
+plugin's hooks change (CASE-26), so a plugin that keeps reverting should still
+show lines here. No lines at all means the hook has never dispatched - usually
+the plugin is disabled, Git Bash is missing, or Node is not on PATH.
+
+## Report back
+
+Summarize as a table: `Plugin | Issue | Detail`. A repair lands on disk, but a
+running session has already cached its hook config - tell the user to run
+`/reload-plugins`, or it applies in the next session (CASE-13).
 
 ## Troubleshooting
 
