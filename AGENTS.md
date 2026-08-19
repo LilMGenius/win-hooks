@@ -15,7 +15,7 @@
 3. **skills/diagnose/SKILL.md** — new symptom or issue type → update.
 4. **commands/status.md, fix.md** — issue type or CLI surface changed → update.
 5. **src/verify.mjs** — new issue type → add the check.
-6. **test/run.mjs** — new CASE → add a fixture under `test/fixtures/` and a test, in the same commit.
+6. **test/run.mjs** — new CASE → add a fixture to `test/fixtures.mjs` and a test, in the same commit.
 7. **Cross-check** — the issue-type vocabulary must match across `src/verify.mjs`, SKILL.md, and status.md.
 8. **Version bump** — `package.json` is the SSOT; run `node scripts/sync-version`, then tag `v{x.y.z}`. New detection/fix capability = `feat:` (minor); repairing existing detection, docs, or refactors = patch.
 
@@ -44,7 +44,7 @@ hooks/run-hook.cmd   cmd.exe/bash polyglot dispatcher (BOM-free, CASE-01)
 
 **Why Node, not bash.** win-hooks is a JSON transformation program that was originally written in a language which cannot parse JSON. Text-matching hook commands with awk/sed was the direct cause of CASE-05, CASE-16, CASE-19, and CASE-24 — four bugs that cannot exist against a parsed object. It was also slow for a structural reason: profiling a 17s run gave `verify` 12,290ms, `find-incompatible` 1,642ms, `fix-bare-commands` 811ms, `fix-backslash-paths` 173ms — about 300 coreutils forks at 32–36ms each on Windows, plus 76ms per `node` spawn. Fork cost *was* the runtime, so no amount of shell tuning would have helped. Node is already a hard dependency of Claude Code, so using it costs the user nothing. Measured: a full repair run went **21s → 0.35s**, and the suite from ~38s → ~4s.
 
-**Language boundaries.** Everything is Node except the two places that cannot be. `hooks/win-hooks` and every generated wrapper body are bash, because they exec `.sh` targets under Git Bash. `hooks/run-hook.cmd` is a cmd/bash polyglot, because cmd.exe is what dispatches hooks on Windows. Do not introduce a third language.
+**Language boundaries.** Everything is Node except where the OS makes it impossible. `hooks/win-hooks` and every generated wrapper body are bash, because they exec `.sh` targets under Git Bash. `hooks/run-hook.cmd` is a cmd/bash polyglot, because cmd.exe is what dispatches hooks on Windows. The tests add one more, and only one: a one-line `.cmd` shim so cmd.exe's `PATH` search can find the fake `codex`. Everything else — including every test fixture — is Node. Do not introduce a third language, and do not let an existing boundary widen: a shim stays a shim, with the behaviour in `.mjs` beside it.
 
 ---
 
@@ -80,9 +80,13 @@ Extend those instead of re-deriving the same probe or regex in a fifth place.
 
 `node test/run.mjs` (or `npm test`) on every change to the scanner, patcher, or verifier. The run prints its own test count and coverage percentage; both are derived at run time, so no number written here can go stale.
 
-Two layers. Pure unit tests exercise `src/rules.mjs` directly, since that is where the domain decisions live. End-to-end tests install a synthetic fixture into a sandbox with a private `$HOME` and drive the real `heal` pipeline, so a test run can never touch this repo's or this machine's real plugins. `test/harness.mjs` holds the sandbox and assertions; the Codex lane additionally generates a fake `codex.cmd` on `PATH`, because Codex plugin enumeration shells out to `codex plugin list --json`.
+Three files, all Node. `test/fixtures.mjs` holds the synthetic broken plugins as data, `test/harness.mjs` holds the sandbox and assertions, `test/run.mjs` holds the tests. Pure unit tests exercise `src/rules.mjs` directly, since that is where the domain decisions live. End-to-end tests write a fixture into a sandbox with a private `$HOME` and drive the real `heal` pipeline, so a test run can never touch this repo's or this machine's real plugins.
 
-One fixture per CASE lives in `test/fixtures/`. A new CASE gets a fixture and a test in the same commit as the fix.
+**Fixtures are data, not a checked-in directory tree.** A fixture is a `hooks.json` plus the files it names, and none of those files is ever executed — a `.sh` or `.py` target only has to be *named* for the scanner to decide about it. As real files they bought a second language in the test tree, a `.gitignore` per fixture to stop the root `*.bak` rule from swallowing the deliberate backups, and byte-identical copies of one plugin under three CASE-numbered names. As strings in `test/fixtures.mjs` they are one map, and the BOM and CRLF cases are the same fixture with the corruption applied by the test.
+
+**The one place a second language is unavoidable** is the fake `codex` on `PATH`, because Codex enumeration shells out to `codex plugin list --json` and cmd.exe's `PATH` search is what has to find it. That `.cmd` is a one-line shim into node; all of the behaviour, including the call counter that proves the `--changed-only` hot path enumerates nothing (CASE-26), lives in the `.mjs` beside it.
+
+A new CASE gets a fixture entry and a test in the same commit as the fix.
 
 **Deliberate absence:** no integration lane clones real plugins as fixtures. It would buy a network dependency and fixtures that break when an upstream plugin changes, to re-prove what a synthetic fixture already proves — every real failure this repo has seen reduced to one. Reproduce the shape, not the plugin.
 

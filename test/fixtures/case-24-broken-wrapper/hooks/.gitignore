@@ -1,4 +1,0 @@
-# This fixture's hooks.json.bak is deliberate test data (the pre-patch state
-# CASE-24 repair reads from), not a runtime backup artifact - un-ignore it here
-# rather than requiring `git add -f` at commit time.
-!hooks.json.bak
