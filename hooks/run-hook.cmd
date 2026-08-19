@@ -1,13 +1,11 @@
 : << 'CMDBLOCK'
 @echo off
-REM The entry point every patched hook is dispatched through - a single file
-REM that is valid batch AND valid bash at once. cmd.exe runs the batch block
-REM below; bash treats it as a quoted here-doc and falls through to the tail.
-REM
-REM Why a polyglot: Claude Code and Codex each dispatch hooks differently, and
-REM the wrapper has to be reachable from both without shipping two files.
-REM Wrapper names are extensionless because Claude Code prepends "bash" to any
-REM command containing .sh on Windows, which would undo the patch (CASE-07).
+REM The entry point every patched hook is dispatched through: one file that is
+REM valid batch AND valid bash at once, so Claude Code and Codex can each
+REM dispatch it their own way. cmd.exe runs the batch block below; bash treats
+REM it as a quoted here-doc and falls through to the tail. Wrapper names are
+REM extensionless because Claude Code prepends "bash" to any command containing
+REM .sh, which would undo the patch (CASE-07).
 REM
 REM Usage: run-hook.cmd <script-name> [args...]
 
@@ -19,8 +17,7 @@ if "%~1"=="" (
 set "HOOK_DIR=%~dp0"
 set "WH_BASH="
 
-REM Explicit override first: set WH_BASH_EXE when bash lives somewhere this
-REM does not already look, e.g. a portable, scoop, or winget Git install.
+REM Explicit override first, for a portable, scoop, or winget Git install.
 if defined WH_BASH_EXE if exist "%WH_BASH_EXE%" set "WH_BASH=%WH_BASH_EXE%"
 
 REM Then Git for Windows, which is where it almost always is.
@@ -29,19 +26,17 @@ if not defined WH_BASH if exist "C:\Program Files (x86)\Git\bin\bash.exe" set "W
 
 if defined WH_BASH goto :run
 
-REM Finally PATH (MSYS2, Cygwin, a nonstandard install). Resolved by the FOR
-REM path-search modifier below rather than by `where`, which costs a subprocess.
-REM That modifier must not be named in a REM: cmd.exe expands it there too, and
-REM a comment mentioning it is a syntax error.
+REM Finally PATH (MSYS2, Cygwin, a nonstandard install), resolved by the FOR
+REM path-search modifier below - `where` costs a subprocess. Never name that
+REM modifier in a REM: cmd.exe expands it there too and the comment breaks.
 for %%I in (bash.exe) do set "WH_BASH=%%~$PATH:I"
 if not defined WH_BASH goto :nobash
 
-REM PATH bash is often C:\Windows\System32\bash.exe, the WSL launcher, which
-REM cannot open Windows paths and still exits 0 - it would swallow every hook
-REM forever. So the candidate has to prove it can see the script it is about to
-REM run (CASE-29). Only PATH is probed; the paths above are known-good. The
-REM path goes through the environment because bash would receive it as $0 and
-REM WSL's launcher does not forward $0 the way a real bash does.
+REM PATH bash is often C:\Windows\System32\bash.exe, the WSL launcher: it
+REM cannot open Windows paths yet still exits 0, so it would swallow every hook
+REM forever. A PATH candidate must prove it can see the script it is about to
+REM run (CASE-29); the paths above are known-good. The probe travels through
+REM the environment because WSL does not forward $0 the way a real bash does.
 set "WH_PROBE=%HOOK_DIR%%~1"
 "%WH_BASH%" -c "test -f \"$WH_PROBE\"" >nul 2>&1
 if errorlevel 1 goto :nobash

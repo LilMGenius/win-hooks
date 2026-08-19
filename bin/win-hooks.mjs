@@ -2,17 +2,14 @@
 // win-hooks CLI - the single entry point. The plugin's own SessionStart and
 // UserPromptSubmit hooks land here too, via hooks/run-hook.cmd -> hooks/win-hooks.
 //
-//   win-hooks                repair Claude Code and Codex plugin hooks
-//   win-hooks heal [host]    repair one host (claude | codex)
-//   win-hooks status [host]  report without changing anything
-//   win-hooks patch [host]   report, repair what is not healthy, prove the result
+//   heal [host]    silent repair; --changed-only skips when no plugin's hooks
+//                  changed since the last run (the near-free per-prompt guard)
+//   status [host]  report, change nothing
+//   patch [host]   report, repair what is not healthy, prove the result
 //
-//   --changed-only   skip when no plugin's hooks changed since the last run
-//                    (the per-prompt guard; near-free on the hot path)
-//
-// Progress goes to stderr, never stdout: these hooks run under Claude Code,
-// whose UserPromptSubmit stdout is injected into the model's context. `status`
-// and `patch` are the exception - a person asked for their output.
+// Progress goes to stderr, never stdout: a UserPromptSubmit hook's stdout is
+// injected into the model's context. `status` and `patch` are the exception -
+// a person asked for their output.
 
 import { isWindows } from '../src/env.mjs';
 import { HOSTS } from '../src/hosts.mjs';
@@ -66,10 +63,9 @@ function summarize({ host, patched, failed, settings, issues, fixes }) {
   return lines;
 }
 
-// Report, repair what is not healthy, then prove the result - one verb,
-// because nobody inspects hooks for their own sake. A healthy host leaves
-// nothing to decide, and a broken one was always going to be repaired, so
-// splitting the two only asks the user which one they needed.
+// One verb, because nobody inspects hooks for their own sake: a healthy host
+// leaves nothing to decide and a broken one was always going to be repaired,
+// so splitting the two only asks the user which one they needed (CASE-30).
 function patchHost(id) {
   const before = inspect(id);
   if (healthy(before)) return report(before) + heartbeat(before);
