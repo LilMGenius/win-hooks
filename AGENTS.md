@@ -29,6 +29,9 @@
 - **Line 1 is an `## ` heading** — this version's one-line title. The release page's own title is always the bare `win-hooks X.Y.Z`, so the heading is where the story goes.
 - **Then prose, not a bullet dump.** Bullets only where the items genuinely are a list.
 - **An `### Install` block last**, indented four spaces: a fenced block survives inside a tag message, but indenting is what the signature strip leaves alone.
+- **Credit a contribution in plain text** — `thanks to @user (#N)`, never `[@user](url)` or `[#N](url)`. GitHub builds the release page's Contributors list by scanning the body for bare `@mention` and `#issue` autolinks; wrapped in a markdown link they render identically and are counted as nothing, which is how v1.10.0 shipped its only outside contribution uncredited.
+
+**Fixing a published release.** Edit the tag message and the page together or they drift: `git tag -s -f vX.Y.Z <commit> -F <notes>` with `GIT_COMMITTER_DATE` set to the original tagger date, force-push the tag, then `gh release edit vX.Y.Z --notes-file <notes>`. Re-pushing a tag re-triggers `release.yml` at *that tag's* commit, so `npm publish` will fail on an already-published version — check whether the workflow existed at that commit before pushing.
 
 ---
 
