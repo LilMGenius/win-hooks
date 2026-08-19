@@ -1,7 +1,7 @@
 {
   "name": "win-hooks",
-  "version": "1.11.0",
-  "description": "Auto-patches Codex plugin hooks for Windows compatibility by adding commandWindows wrappers.",
+  "version": "1.12.0",
+  "description": "Windows auto-patcher for vibe coders.",
   "author": {
     "name": "LilMGenius",
     "url": "https://github.com/LilMGenius"
@@ -9,19 +9,12 @@
   "homepage": "https://github.com/LilMGenius/win-hooks",
   "repository": "https://github.com/LilMGenius/win-hooks",
   "license": "MIT",
-  "keywords": [
-    "windows",
-    "hooks",
-    "codex",
-    "codex-plugin",
-    "compatibility",
-    "patch"
-  ],
+  "keywords": ["windows","hooks","claude-code","codex","plugin","compatibility","patch","cli","winux"],
   "hooks": "./hooks/codex-hooks.json",
   "interface": {
     "displayName": "win-hooks",
-    "shortDescription": "Repair Codex plugin hooks on Windows",
-    "longDescription": "win-hooks scans installed Codex plugins and adds Windows-specific commandWindows wrappers for hook commands that assume Unix shells, .sh scripts, or non-Windows dispatch.",
+    "shortDescription": "Windows auto-patcher for vibe coders.",
+    "longDescription": "win-hooks scans the Claude Code and Codex plugins installed on a Windows machine and repairs the hooks that cannot run there: .sh scripts cmd.exe cannot execute, bare Unix commands and interpreters that do not resolve, UTF-8 BOMs, and backslash paths. It repairs at every session start and again whenever a plugin update reverts a fix, so plugins installed later are covered too.",
     "developerName": "LilMGenius",
     "category": "Developer Tools",
     "capabilities": [

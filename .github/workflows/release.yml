@@ -31,7 +31,7 @@ jobs:
           echo "tag=$tag package.json=$pkg"
           [ "$tag" = "$pkg" ] || { echo "::error::tag $tag != package.json $pkg"; exit 1; }
 
-      - run: node scripts/sync-version --check
+      - run: node scripts/sync-manifests --check
       - run: node test/run.mjs
 
   publish:

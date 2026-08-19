@@ -4,14 +4,14 @@
     "name": "LilMGenius"
   },
   "metadata": {
-    "description": "Auto-patches Claude Code plugin hooks for Windows compatibility"
+    "description": "Windows auto-patcher for vibe coders."
   },
   "plugins": [
     {
       "name": "win-hooks",
       "source": "./",
-      "description": "Automatically patches Claude Code plugin hooks for Windows compatibility. Fixes .sh scripts, missing binaries, and Unix-only commands that fail on Windows.",
-      "version": "1.11.0"
+      "description": "Windows auto-patcher for vibe coders.",
+      "version": "1.12.0"
     }
   ]
 }

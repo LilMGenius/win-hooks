@@ -1,7 +1,7 @@
 {
   "name": "win-hooks",
-  "version": "1.11.0",
-  "description": "Automatically patches Claude Code plugin hooks for Windows compatibility. Fixes .sh scripts, missing binaries, and Unix-only commands that fail on Windows.",
+  "version": "1.12.0",
+  "description": "win-hooks scans the Claude Code and Codex plugins installed on a Windows machine and repairs the hooks that cannot run there: .sh scripts cmd.exe cannot execute, bare Unix commands and interpreters that do not resolve, UTF-8 BOMs, and backslash paths. It repairs at every session start and again whenever a plugin update reverts a fix, so plugins installed later are covered too.",
   "author": {
     "name": "LilMGenius",
     "url": "https://github.com/LilMGenius"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/LilMGenius/win-hooks",
   "repository": "https://github.com/LilMGenius/win-hooks",
   "license": "MIT",
-  "keywords": ["windows", "hooks", "compatibility", "patch", "fix", "cross-platform"]
+  "keywords": ["windows","hooks","claude-code","codex","plugin","compatibility","patch","cli","winux"]
 }

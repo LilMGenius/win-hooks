@@ -6,8 +6,8 @@
 
 **Windows auto-patcher for vibe coders.**
 
-Your AI coding tools run on Windows. Their plugins mostly don't.<br>
-win-hooks fixes them for you, automatically, every session.
+win-hooks repairs the plugin hooks that break on your Windows machine.<br>
+Automatically, at every session start, and again for ones added later.
 
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%2F11-0078D4)](https://www.microsoft.com/windows)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.anthropic.com/en/docs/claude-code)

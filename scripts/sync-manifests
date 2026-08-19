@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+// win-hooks: scripts/sync-manifests
+// package.json owns everything the manifests repeat: the version, the product
+// one-liner, the paragraph an agent reads, and the keyword set. No host derives
+// them, so this writes the copies and CI checks that none of them drifted.
+//
+//   node scripts/sync-manifests           write package.json's values into the copies
+//   node scripts/sync-manifests --check   exit 1 if any copy disagrees (used by CI)
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const check = process.argv.includes('--check');
+const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+
+// Which manifest key copies which package.json field, and how many times the
+// file spells it. A one-liner is what you read while browsing a list; the
+// paragraph is what an agent reads to decide whether the plugin applies. Codex
+// has a field for each, Claude has only `description` - so Claude's carries the
+// paragraph, and the marketplace card beside it carries the one-liner. An
+// unexpected count is a structural change, not something to guess at.
+const targets = [
+  {
+    rel: '.claude-plugin/plugin.json',
+    strings: { version: ['version', 1], description: ['longDescription', 1] },
+    keywords: true,
+  },
+  {
+    rel: '.claude-plugin/marketplace.json',
+    strings: { version: ['version', 1], description: ['description', 2] },
+  },
+  {
+    rel: '.codex-plugin/plugin.json',
+    strings: {
+      version: ['version', 1],
+      description: ['description', 1],
+      shortDescription: ['description', 1],
+      longDescription: ['longDescription', 1],
+    },
+    keywords: true,
+  },
+];
+
+// The README shows the one-liner to humans, as the bold line under the title.
+const README_ONE_LINER = /^\*\*(.+)\*\*$/m;
+
+// Rewrite each value in place rather than re-serializing the parsed object:
+// JSON.stringify would rewrite every line it disagrees with about formatting, so
+// a version bump would carry unrelated reflow noise into the release diff.
+const stringField = (key) => new RegExp(`("${key}"[ ]*:[ ]*")([^"]*)(")`, 'g');
+const KEYWORDS = /"keywords"[ ]*:[ ]*\[[^\]]*\]/;
+const keywordLine = `"keywords": ${JSON.stringify(pkg.keywords)}`;
+
+let drift = 0;
+const disagree = (rel, what, found, want) => {
+  if (!check) return false;
+  console.error(`drift: ${rel} ${what} is ${JSON.stringify(found)}, package.json is ${JSON.stringify(want)}`);
+  drift++;
+  return true;
+};
+
+for (const { rel, strings, keywords } of targets) {
+  const path = join(ROOT, rel);
+  let text = readFileSync(path, 'utf8');
+
+  for (const [key, [field, count]] of Object.entries(strings)) {
+    const want = pkg[field];
+    if (typeof want !== 'string') throw new Error(`package.json has no ${field} to copy`);
+    if (/["\\]/.test(want)) throw new Error(`package.json ${field} needs JSON escaping, which this rewrite cannot express`);
+
+    const found = [...text.matchAll(stringField(key))];
+    if (found.length !== count) throw new Error(`${rel}: expected ${count} ${key} field(s), found ${found.length}`);
+    if (found.every((m) => m[2] === want)) continue;
+    if (disagree(rel, key, found.find((m) => m[2] !== want)[2], want)) continue;
+
+    text = text.replace(stringField(key), `$1${want}$3`);
+    console.log(`synced ${rel} ${key}`);
+  }
+
+  if (keywords) {
+    const found = text.match(KEYWORDS);
+    if (!found) throw new Error(`${rel}: no keywords array to keep in sync`);
+    if (found[0] !== keywordLine && !disagree(rel, 'keywords', JSON.parse(`{${found[0]}}`).keywords, pkg.keywords)) {
+      text = text.replace(KEYWORDS, keywordLine);
+      console.log(`synced ${rel} keywords`);
+    }
+  }
+
+  if (!check) writeFileSync(path, text);
+}
+
+{
+  const path = join(ROOT, 'README.md');
+  const text = readFileSync(path, 'utf8');
+  const found = text.match(README_ONE_LINER);
+  if (!found) throw new Error('README.md: no bold one-liner to keep in sync');
+  if (found[1] !== pkg.description && !disagree('README.md', 'one-liner', found[1], pkg.description)) {
+    writeFileSync(path, text.replace(README_ONE_LINER, `**${pkg.description}**`));
+    console.log('synced README.md one-liner');
+  }
+}
+
+if (check && drift) process.exit(1);
+if (check) console.log(`version ${pkg.version}, both descriptions and the keywords are in sync`);
