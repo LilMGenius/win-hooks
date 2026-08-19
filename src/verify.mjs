@@ -1,7 +1,7 @@
 // Health check for already-patched plugins, with optional auto-repair.
 //
 // The issue types below are a closed vocabulary, shared verbatim with
-// skills/diagnose/SKILL.md and commands/status.md. Adding one means updating
+// skills/patch/SKILL.md and commands/patch.md. Adding one means updating
 // all three.
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';

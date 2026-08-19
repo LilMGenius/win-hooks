@@ -6,20 +6,30 @@
 
 **Codex and Claude hook surfaces differ.** Claude Code repair rewrites the hook `command` in place. Codex repair preserves `command` and adds `commandWindows`, because Codex has a first-class Windows hook field and the portable command must keep working on macOS and Linux. That difference lives in `src/hosts.mjs` and nowhere else; scanning, wrapper generation, and verification are shared.
 
-**One root cause = one issue type.** Extend the existing check/issue type for a variant instead of adding a new one; fold an overlapping new CASE into the existing one, and merge a single-CASE section into a neighbor. **CASE-NN are discovery-order stable IDs** — append a new issue at the next free number and **never renumber** (SKILL.md, status.md, and git reference them); section order is by priority, independent of the numbers.
+**One root cause = one issue type.** Extend the existing check/issue type for a variant instead of adding a new one; fold an overlapping new CASE into the existing one, and merge a single-CASE section into a neighbor. **CASE-NN are discovery-order stable IDs** — append a new issue at the next free number and **never renumber** (SKILL.md, commands/patch.md, and git reference them); section order is by priority, independent of the numbers.
 
-**Before committing, sync every surface:**
+### Before committing
+
+Every change syncs these surfaces:
 
 1. **AGENTS.md** — new edge case → add a CASE-XX entry.
 2. **README.md** — user-visible behavior changed → update.
-3. **skills/diagnose/SKILL.md** — new symptom or issue type → update.
-4. **commands/status.md, fix.md** — issue type or CLI surface changed → update.
+3. **skills/patch/SKILL.md** — new symptom or issue type → update.
+4. **commands/patch.md** — issue type or CLI surface changed → update.
 5. **src/verify.mjs** — new issue type → add the check.
 6. **test/run.mjs** — new CASE → add a fixture to `test/fixtures.mjs` and a test, in the same commit.
-7. **Cross-check** — the issue-type vocabulary must match across `src/verify.mjs`, SKILL.md, and status.md.
+7. **Cross-check** — the issue-type vocabulary must match across `src/verify.mjs`, SKILL.md, and commands/patch.md.
 8. **Version bump** — `package.json` is the SSOT; run `node scripts/sync-version`, then tag `v{x.y.z}`. New detection/fix capability = `feat:` (minor); repairing existing detection, docs, or refactors = patch.
 
+### Commits and releases
+
 **Commit messages:** one bullet per line, no wrapping within a bullet; no co-author tags; no version-bump lines.
+
+**Release notes are written once, in the tag.** There is no CHANGELOG: the annotated tag's message *is* the release notes, and the workflow reads it back from the API to build the release page, so the two cannot drift. Write it with `git tag -s vX.Y.Z -F <notes> --cleanup=verbatim`, shaped as:
+
+- **Line 1 is an `## ` heading** — the one-line title for *this* version, the thing a reader remembers it by. The release page's own title is always the bare `win-hooks X.Y.Z`, so the heading is where the story goes.
+- **Then prose, not a bullet dump.** A lead paragraph of what changed for the user, then the substance. Bullets only where the items genuinely are a list.
+- **An `### Install` block last**, indented four spaces (a fenced block inside a tag message survives, but indenting is what the signature strip leaves alone).
 
 ---
 
@@ -28,7 +38,7 @@
 One engine, one entry point. The plugin's own hooks, the CLI, and the slash commands all reach the same code.
 
 ```
-bin/win-hooks.mjs    entry: [heal|status] [claude|codex] [--changed-only]
+bin/win-hooks.mjs    entry: [patch|heal|status] [claude|codex] [--changed-only]
 src/heal.mjs         orchestration, state dir, heartbeat, changed-only guard
 src/patch.mjs        scan installed plugins, generate wrappers, rewrite hooks.json
 src/verify.mjs       post-patch health checks + auto-repair (issue-type vocabulary)
@@ -96,7 +106,7 @@ Coverage is measured against this file. The runner reads every `### CASE-NN` hea
 
 ## Known Edge Cases & Scenarios
 
-All discovered Windows compatibility issues that win-hooks detects, fixes, or documents. Ordered by diagnostic priority — user-facing symptom categories first, internal machinery next. **CASE-NN numbers are stable IDs in discovery order (referenced across SKILL.md / status.md / git), so they are intentionally not sequential here.**
+All discovered Windows compatibility issues that win-hooks detects, fixes, or documents. Ordered by diagnostic priority — user-facing symptom categories first, internal machinery next. **CASE-NN numbers are stable IDs in discovery order (referenced across SKILL.md / commands/patch.md / git), so they are intentionally not sequential here.**
 
 ---
 
@@ -206,7 +216,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 ## Plugin Environment
 
 ### CASE-11: `$CLAUDE_PLUGIN_ROOT` not available in the Bash tool
-- **Symptom**: `/win-hooks:fix` fails — the variable is empty when a slash command runs.
+- **Symptom**: `/win-hooks:patch` fails — the variable is empty when a slash command runs.
 - **Fix**: Every heal writes its own install path to `~/.claude/win-hooks/root`, and the commands and skill read that one file. This replaces parsing `installed_plugins.json` with awk in three separate places.
 
 ### CASE-12: Multiple cached plugin versions
@@ -216,7 +226,7 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 
 ### CASE-13: Plugin update overwrites patches
 - **Symptom**: A plugin update — notably a mid-session `/plugin` bump — reinstalls `hooks.json` in its un-patched form, so the patch is lost and the hooks break again.
-- **Fix**: Two triggers re-patch automatically: **SessionStart** at the start of every session, and **UserPromptSubmit** on the next prompt after a plugin's hooks change (CASE-26). No manual `/win-hooks:fix` needed.
+- **Fix**: Two triggers re-patch automatically: **SessionStart** at the start of every session, and **UserPromptSubmit** on the next prompt after a plugin's hooks change (CASE-26). No manual `/win-hooks:patch` needed.
 - **Mid-session caveat**: both triggers edit `hooks.json` on **disk**, but Claude Code has already loaded the hook config for the running session, so the fresh patch applies on the **next** session or immediately after [`/reload-plugins`](https://code.claude.com/docs/en/plugins-reference), which reloads hook/MCP/LSP config from disk without a full restart. `/reload-plugins` reloads *config* only — it does not re-fire SessionStart, which is exactly why the per-prompt guard exists.
 
 ### CASE-14: Hand-patched files give a false impression
@@ -260,8 +270,8 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Fix**:
   - **Make it fast instead of making the timeout bigger.** The Node rewrite brought a full repair run well under a second, roughly 100× under the flat `60` second timeout shipped in `hooks/hooks.json`. An earlier version self-sized that timeout each run by rewriting its own `hooks.json`; that machinery is **deleted**. It was compensating for the fork cost rather than removing it, and a plugin that edits its own manifest on every session is a maintenance hazard — it dirtied the working tree, forced `--changed-only` to special-case win-hooks' own plugin to avoid a self-trigger loop, and made the shipped default meaningless.
   - **The `timeout` field is in SECONDS**, in both hosts. It shipped as `60000` — nominally 16.6 hours — which is not a longer safety margin but the absence of one: a hung run would have hung the session instead of being killed. Any new value goes in seconds.
-  - **Heartbeat.** Every run appends one line to `~/.claude/win-hooks/last-run.log` — disk only, zero stdout noise, rotated at 50 lines — recording duration, plugins scanned, plugins patched, settings repairs, verify fixes, and remaining issues. Reading it answers "did it heal this session?"; `/win-hooks:status` surfaces the last few lines.
-- **Note**: This is win-hooks' OWN reliability infrastructure, not a detected defect, so it adds **no issue type** — the cross-check in Work Principles item 7 is unchanged.
+  - **Heartbeat.** Every run appends one line to `~/.claude/win-hooks/last-run.log` — disk only, zero stdout noise, rotated at 50 lines — recording duration, plugins scanned, plugins patched, settings repairs, verify fixes, and remaining issues. Reading it answers "did it heal this session?"; `/win-hooks:patch` surfaces the last few lines.
+- **Note**: This is win-hooks' OWN reliability infrastructure, not a detected defect, so it adds **no issue type** — the cross-check in Before committing item 7 is unchanged.
 
 ### CASE-26: Mid-session plugin update leaves patches un-restored until next session
 - **Symptom**: A plugin updated *within* a session (a `/plugin` bump, then `/reload-plugins`) reverts to an incompatible form and stays broken for the rest of the session. Running the fix by hand is the only remedy, and it recurs on every update.
@@ -270,6 +280,12 @@ All discovered Windows compatibility issues that win-hooks detects, fixes, or do
 - **Cost**: The guard must not enumerate. Listing Claude's plugins parses a manifest; listing Codex's spawns `codex plugin list --json` and reads a manifest per plugin — far too much to pay on every prompt. So each full run writes `seen.json`, the paths its stamp covers: every `hooks.json` it scanned, their parent directories, and the host's registry (`installed_plugins.json` and `settings.json` for Claude, `config.toml` for Codex — Codex records every install, removal, and enable there). The guard stats that list and nothing else. An updated hook moves a file's mtime, an added or removed hook file moves its directory's, an installed or removed plugin moves the registry's; anything newer than the stamp triggers the real scan. A false positive costs one full heal, and there is no false negative, because nothing can change a `hooks.json` without moving one of the watched paths.
 - **Behavior**: When something did change it runs the same single repair path as SessionStart and reports to stderr only, never stdout (a UserPromptSubmit hook's stdout is injected into the model's context). The stamp is written **last**, after every `hooks.json` the run rewrote, so a repair never re-triggers itself.
 - **Note**: Like CASE-25 this is win-hooks' OWN infrastructure and adds **no issue type**. The guard heals the *disk*; the running session picks it up on `/reload-plugins` or next session (CASE-13).
+
+### CASE-30: check and fix were two commands, so the sequencing lived in a prompt
+- **Symptom**: nothing on disk — a usability defect. A non-developer had to pick between a status command and a fix command, and the report-then-repair-only-if-needed order was written as steps in a markdown prompt, so it held only while the model followed them.
+- **Fix**: one verb. `win-hooks patch` inspects, prints the issue table, returns if the host is already clean, and otherwise heals and re-inspects, printing the state after repair. That is one path in `bin/win-hooks.mjs`, not three steps in a prompt. `/win-hooks:patch` and `skills/patch/` are the only command and skill; `heal` (silent, hook-driven) and `status` (read-only) remain the primitives it composes.
+- **Note**: `patch` and `status` are the deliberate exceptions to *never write stdout* — a person asked for the report. Hooks still call `heal`, which stays silent (Conventions → Hook resilience 4).
+- Like CASE-25 and CASE-26 this is win-hooks' own surface, not a detected defect, so it adds **no issue type**.
 
 ---
 

@@ -357,6 +357,34 @@ test('CASE-28: a deleted Codex wrapper is rebuilt without a bare .py exec', (sb)
   assertLacks(join(plugin, '_codex_hooks/x'), 'exec "$PLUGIN_ROOT/hooks/x.py" "$@"');
 });
 
+// -- The merged patch verb ---------------------------------------------
+
+// How many times the engine has run a repair: every heal appends one line.
+const healRuns = (sb) => {
+  try {
+    return read(sb.state('last-run.log')).split('\n').filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+};
+
+test('CASE-30: patch repairs a broken plugin and reports healthy in one run', (sb) => {
+  const plugin = sb.install('shScript', 'case30broken');
+  const { out } = sb.run('patch', 'claude');
+  assert(out.includes('incompatible'), 'the report must show what was wrong first: ' + out);
+  assert(out.includes('healthy'), 'and prove it is fixed afterwards: ' + out);
+  assertContains(join(plugin, 'hooks/hooks.json'), '_hooks/run-hook.cmd');
+});
+
+test('CASE-30: patch on a healthy host reports without repairing', (sb) => {
+  sb.install('shScript', 'case30healthy');
+  sb.run('heal', 'claude');
+  const before = healRuns(sb);
+  const { out } = sb.run('patch', 'claude');
+  assert(out.includes('healthy'), 'a healthy host still gets a report: ' + out);
+  assert(healRuns(sb) === before, 'a healthy host must not be repaired again: ' + before + ' -> ' + healRuns(sb));
+});
+
 summarize('win-hooks test suite', {
   'CASE-14': 'a work principle - never repair a machine by hand - not a code path a test can exercise',
 });

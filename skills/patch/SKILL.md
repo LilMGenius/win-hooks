@@ -1,5 +1,5 @@
 ---
-name: diagnose
+name: patch
 description: |
   Diagnoses and fixes Claude Code / Codex plugin hook failures on Windows.
   Use this skill when:
@@ -12,13 +12,14 @@ description: |
   Do NOT use on macOS or Linux, where hooks work natively.
 ---
 
-# win-hooks Diagnostics
+# win-hooks
 
 Two structural causes explain nearly every hook failure on Windows: plugins
 ship `.sh` scripts cmd.exe cannot run, and they invoke bare Unix commands or
 interpreters that are not resolvable when the hook launches. The remedy is
-always **`/win-hooks:fix`** — the tables below exist to identify *what* is
-being seen. Root-cause write-ups live in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
+always **`/win-hooks:patch`**, which looks first and repairs what it finds; the
+tables below exist to identify *what* is being seen. Root-cause write-ups live
+in [`AGENTS.md`](../../AGENTS.md) as CASE-NN.
 
 ## Recognizing the error
 
@@ -37,35 +38,29 @@ being seen. Root-cause write-ups live in [`AGENTS.md`](../../AGENTS.md) as CASE-
 BOM-corrupted polyglot wrapper (CASE-01); `'node'...내부 또는 외부 명령` is a bare
 interpreter in settings.json (CASE-23).
 
-## Diagnosing
+## Diagnosing and fixing
 
 1. Confirm the platform is `win32`. Otherwise this skill does not apply.
-2. Run the report — win-hooks records its own install path on every run:
-   ```bash
-   node "$(cat ~/.claude/win-hooks/root)/bin/win-hooks.mjs" status
-   ```
-   If `~/.claude/win-hooks/root` is missing, win-hooks has never run; use
-   `npx @lilmgenius/win-hooks status` instead.
-3. Read the issue lines. The vocabulary is closed and documented in
-   [`commands/status.md`](../../commands/status.md): `incompatible`, `bom`,
+2. Run **`/win-hooks:patch`**. It reports, repairs whatever is not healthy, and
+   re-reports to prove the result. Its issue-type table is the closed vocabulary
+   ([`commands/patch.md`](../../commands/patch.md)): `incompatible`, `bom`,
    `json_crlf`, `json_invalid`, `wrapper_missing`, `wrapper_broken`,
    `cmd_missing`, `recursive_wrapper`, `python3_stub`, `backslash_path`,
    `bare_command`.
+3. Without the slash command, the same work is `node "$(cat ~/.claude/win-hooks/root)/bin/win-hooks.mjs" patch`; if
+   `~/.claude/win-hooks/root` is missing win-hooks has never run, so use
+   `npx @lilmgenius/win-hooks patch` instead.
 4. Report as a table: `Plugin | Issue | Detail`.
 
-## Fixing
-
-Run `/win-hooks:fix` (or `node "$(cat ~/.claude/win-hooks/root)/bin/win-hooks.mjs" heal`).
-
 The repair lands on disk, but a running session has already cached its hook
-config — it applies on `/reload-plugins` or in the next session (CASE-13).
+config - it applies on `/reload-plugins` or in the next session (CASE-13).
 
 ## Is the self-heal firing?
 
-The `last runs` block of `status` is the heartbeat. win-hooks heals at every
+The `last runs` block of the report is the heartbeat. win-hooks heals at every
 SessionStart, and again on the next prompt after a plugin's hooks change
-(CASE-26). If a plugin keeps reverting yet a manual fix works, check there: no
-lines at all means the hook never dispatched — the plugin is disabled, Git Bash
+(CASE-26). If a plugin keeps reverting yet a manual repair works, check there: no
+lines at all means the hook never dispatched - the plugin is disabled, Git Bash
 is missing, or Node is not on PATH.
 
 ## Troubleshooting

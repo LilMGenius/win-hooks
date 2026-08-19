@@ -58,23 +58,21 @@ jobs:
     permissions:
       contents: write         # creating the release page writes to the repo
     steps:
-      - uses: actions/checkout@v5
-
-      # The CHANGELOG entry is the release notes; keeping one copy means the
-      # release page cannot drift from the file in the tree.
-      - name: extract this version's changelog section
-        shell: bash
-        run: |
-          v="${GITHUB_REF_NAME#v}"
-          awk -v v="$v" '
-            $0 ~ "^## " v "( |$)" {found=1; next}
-            found && /^## /                {exit}
-            found                          {print}
-          ' CHANGELOG.md > notes.md
-          test -s notes.md || { echo "::error::no CHANGELOG section for $v"; exit 1; }
-          cat notes.md
-
+      # The annotated tag's message is the release notes. The notes are then
+      # written once, at the moment of tagging, and the release page cannot
+      # drift from the object the version was cut from.
       - name: publish the release page
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "win-hooks ${GITHUB_REF_NAME#v}" --notes-file notes.md
+        run: |
+          # Read the tag message from the API: no checkout carries the tag
+          # object, so local git would silently fall back to the commit message.
+          sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq '.object.sha')
+          gh api "repos/${GITHUB_REPOSITORY}/git/tags/$sha" --jq '.message' \
+            | sed '/-----BEGIN PGP SIGNATURE-----/,/-----END PGP SIGNATURE-----/d' > notes.md
+          test -s notes.md || { echo "::error::tag $GITHUB_REF_NAME carries no message"; exit 1; }
+          cat notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "win-hooks ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md
