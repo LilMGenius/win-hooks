@@ -6,31 +6,21 @@
 
 **Windows auto-patcher for vibe coders.**
 
-Your AI coding tools work on Windows. Their plugins mostly don't.<br>
+Your AI coding tools run on Windows. Their plugins mostly don't.<br>
 win-hooks fixes them for you — automatically, every session.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows)](https://www.microsoft.com/windows)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-6B4FBB)](https://docs.anthropic.com/en/docs/claude-code)
-[![Codex](https://img.shields.io/badge/Codex-Plugin-000000?logo=openai&logoColor=white)](https://developers.openai.com/codex)
+[![Windows 10/11](https://img.shields.io/badge/Windows-10%2F11-0078D4)](https://www.microsoft.com/windows)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.anthropic.com/en/docs/claude-code)
+[![Codex plugin](https://img.shields.io/badge/Codex-plugin-FFFFFF)](https://developers.openai.com/codex)
+[![License: MIT](https://img.shields.io/badge/License-MIT-000000)](LICENSE)
 
 </div>
 
 ---
 
-## You know this screen
+## Install
 
-```
-SessionStart hook error: /bin/bash: command not found
-PreToolUse hook error: scripts/check.sh: No such file or directory
-PostToolUse hook error: semgrep: command not found
-```
-
-You installed a plugin. It works fine for everyone on a Mac. On your machine it greets you with red text every single time you open a session.
-
-Nothing is broken on your end. Almost every plugin is written and tested on macOS or Linux, so its hooks quietly assume Unix tools that Windows does not have. You are not supposed to fix that by hand. **win-hooks does it for you.**
-
-## Install it once, forget it exists
+Pick your tool and paste one line.
 
 **Claude Code**
 
@@ -44,16 +34,29 @@ claude plugin marketplace add LilMGenius/win-hooks && claude plugin install win-
 codex plugin marketplace add LilMGenius/win-hooks && codex plugin add win-hooks@win-hooks
 ```
 
-That's it. No config, no flags, nothing to remember. From then on win-hooks checks your plugins at the start of every session and repairs whatever broke — including plugins you install later, and plugins that break again after an update.
-
-Prefer a one-shot fix, or need it in CI? Skip the plugin and run it directly:
+**Neither — just fix my plugins now**
 
 ```bash
-npx @lilmgenius/win-hooks           # repair every installed plugin, now
-npx @lilmgenius/win-hooks status    # show what it found last time
+npx @lilmgenius/win-hooks
 ```
 
-## What it actually fixes
+That's the whole setup. No config, no flags, nothing to remember.
+
+You need Windows 10/11 and [Git for Windows](https://git-scm.com/download/win), which you almost certainly already have. Node.js comes with Claude Code and Codex.
+
+## The problem it solves
+
+```
+SessionStart hook error: /bin/bash: command not found
+PreToolUse hook error: scripts/check.sh: No such file or directory
+PostToolUse hook error: semgrep: command not found
+```
+
+You installed a plugin. It works fine for everyone on a Mac. On your machine it greets you with red text every time you open a session.
+
+Nothing is broken on your end. Almost every plugin is written and tested on macOS or Linux, so its hooks quietly assume Unix tools that Windows does not have. You are not supposed to fix that by hand — win-hooks does it for you, at the start of every session, including plugins you install later and plugins that break again after an update.
+
+## What it fixes
 
 | The error you see | What was wrong |
 |---|---|
@@ -66,31 +69,22 @@ npx @lilmgenius/win-hooks status    # show what it found last time
 
 Every repair is made next to the original file, never on top of it. The plugin's own files are backed up, and anything already working is left alone.
 
-## Staying fixed
+## Checking on it
 
 ```mermaid
 flowchart LR
     A[scan installed plugins] --> B[patch broken hooks] --> C[verify & auto-repair]
 ```
 
-That runs at session start, and again on your next prompt if a plugin updated itself in the meantime — because an update reinstalls the plugin's original, still-broken hooks. When win-hooks re-patches mid-session it tells you to run `/reload-plugins`, which picks up the fix without restarting.
+That runs at session start, and again on your next prompt if a plugin updated itself in the meantime — an update reinstalls the plugin's original, still-broken hooks. When win-hooks re-patches mid-session it tells you to run `/reload-plugins`, which picks up the fix without restarting.
 
-Because the healthy path is silent, it also leaves a short log behind:
+A healthy run is silent, so it leaves a short log behind instead:
 
-```bash
-npx @lilmgenius/win-hooks status
-```
-
-Or, inside a session:
-
-| Command | What it does |
-|---|---|
-| `/win-hooks:status` | Show what's healthy, what's broken, and when it last ran |
-| `/win-hooks:fix` | Run the repair now, instead of waiting for the next session |
-
-## Requirements
-
-Windows 10/11, and [Git for Windows](https://git-scm.com/download/win) — which you almost certainly already have. Node.js comes with Claude Code and Codex.
+| Where | Command | What it shows |
+|---|---|---|
+| Any terminal | `npx @lilmgenius/win-hooks status` | What it found on its last run |
+| In a session | `/win-hooks:status` | What's healthy, what's broken, when it last ran |
+| In a session | `/win-hooks:fix` | Runs the repair now, instead of waiting for the next session |
 
 ## Privacy
 
@@ -110,7 +104,7 @@ plugin/
     └── check               → resolves the real interpreter, then execs
 ```
 
-Codex works the same way, with one difference: it has a native `commandWindows` field, so win-hooks *adds* the Windows command instead of replacing the portable one. Your plugins keep working unchanged on macOS and Linux.
+Codex works the same way with one difference: it has a native `commandWindows` field, so win-hooks *adds* the Windows command instead of replacing the portable one. Your plugins keep working unchanged on macOS and Linux.
 
 Wrapper filenames are deliberately extensionless (`check`, not `check.sh`) — Claude Code auto-prepends `bash` to anything containing `.sh` on Windows, which would undo the fix.
 
