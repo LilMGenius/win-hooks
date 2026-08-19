@@ -16,11 +16,11 @@ jobs:
   verify:
     runs-on: windows-latest   # win-hooks exits 0 off-Windows, so only Windows proves it
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
 
       # No dependencies and no lockfile: nothing to install.
       - name: tag matches package.json
@@ -41,11 +41,11 @@ jobs:
       contents: read
       id-token: write         # mints the OIDC token npm signs the provenance with
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - run: npm publish --provenance
@@ -58,7 +58,7 @@ jobs:
     permissions:
       contents: write         # creating the release page writes to the repo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The CHANGELOG entry is the release notes; keeping one copy means the
       # release page cannot drift from the file in the tree.
