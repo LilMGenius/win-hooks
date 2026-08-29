@@ -1,11 +1,12 @@
 // Orchestration: the one code path every surface goes through - the plugin's
 // own hooks, the CLI, and the slash commands.
 //
-// Two rules govern this file. Nothing is ever written to stdout from a hook: a
-// UserPromptSubmit hook's stdout is injected into the model's context, so
-// progress chatter would silently poison every prompt. And an environmental
-// failure degrades to a no-op rather than breaking the session it exists to
-// protect.
+// Two rules govern this file. It prints nothing itself: a UserPromptSubmit
+// hook's stdout is injected into the model's context, so progress chatter
+// would silently poison every prompt. The one place that is a feature rather
+// than a hazard is session start, and only the CLI decides that, from
+// --announce (CASE-32). And an environmental failure degrades to a no-op
+// rather than breaking the session it exists to protect.
 
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -99,7 +100,7 @@ export function heal(hostId, { changedOnly = false } = {}) {
     issues: issues.length,
   });
 
-  return { host, patched, failed, settings, issues, fixes };
+  return { host, scanned: plugins.length, patched, failed, settings, issues, fixes };
 }
 
 // Report without touching anything.

@@ -75,11 +75,16 @@ there is nothing left to do. The line prefixes are a closed vocabulary:
 | `bare_command` | A settings.json hook command cmd.exe cannot resolve |
 
 The `last runs` block is the heartbeat: one line per run with its duration and
-how many plugins were scanned and patched. The happy path is silent, so this is
-how "healed successfully" is told apart from "never ran". win-hooks heals at
-every SessionStart, and again on the next prompt after a plugin's hooks change
-(CASE-26). No lines at all means the hook never dispatched - usually the plugin
-is disabled, Git Bash is missing, or Node is not on PATH.
+how many plugins were scanned and patched. It does not prove the hook ran, since
+a hand-run repair writes the same line. win-hooks heals at every SessionStart,
+announcing the result in one line so a clean run is distinguishable from a hook
+that never fired (CASE-32). It heals again silently on the next prompt after a
+plugin's hooks change (CASE-26). No lines at all means it never dispatched -
+usually the plugin is disabled, Git Bash is missing, or Node is not on PATH. On
+Codex there is one more cause: an upgrade changes the hook manifest, which
+invalidates the trust hash Codex recorded for it, and an untrusted hook is
+skipped with no message at all (CASE-33). Running `patch` by hand still repairs
+everything; re-trusting the hook is the user's call, never win-hooks'.
 
 ## Report back
 

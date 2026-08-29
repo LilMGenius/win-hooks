@@ -1,6 +1,6 @@
 {
   "name": "win-hooks",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "win-hooks scans the Claude Code and Codex plugins installed on a Windows machine and repairs the hooks that cannot run there: .sh scripts cmd.exe cannot execute, bare Unix commands and interpreters that do not resolve, UTF-8 BOMs, and backslash paths. It repairs at every session start and again whenever a plugin update reverts a fix, so plugins installed later are covered too.",
   "author": {
     "name": "LilMGenius",

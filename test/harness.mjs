@@ -79,6 +79,52 @@ export const assertContains = (file, text) =>
 export const assertLacks = (file, text) =>
   assert(!read(file).includes(text), file + ' should NOT contain: ' + text);
 
+// -- Dispatchers -------------------------------------------------------
+
+// How to hand one command line to each shell a Windows host might dispatch a
+// hook through.
+//
+// cmd.exe wants the line verbatim: node's default argument escaping turns an
+// embedded quote into a backslash-quote pair, which cmd.exe reads as a literal
+// backslash and then cannot find the program. Wrapping the whole line in
+// quotes is what /s strips back off.
+//
+// "powershell" names a language, not a binary. Windows ships Windows
+// PowerShell 5.1 as powershell.exe and always has it; PowerShell 7+ installs
+// alongside under a different name, pwsh.exe, and may be absent. Both are
+// probed - a first-match fallback would let the gate pass on a machine whose
+// user drives the edition it never reached - and the optional one contributes
+// nothing when it is not installed, so the gate does not depend on which
+// editions a particular machine happens to have.
+const PS_ARGS = (command) => ['-NoProfile', '-NonInteractive', '-Command', command];
+
+const EDITIONS = {
+  cmd: [{
+    name: 'cmd.exe',
+    exe: join(SYSTEM32, 'cmd.exe'),
+    args: (command) => ['/d', '/s', '/c', '"' + command + '"'],
+    verbatim: true,
+  }],
+  powershell: [
+    { name: 'powershell 5.1', exe: join(SYSTEM32, 'WindowsPowerShell/v1.0/powershell.exe') },
+    { name: 'pwsh 7+', exe: 'pwsh.exe', optional: true },
+  ],
+};
+
+// Run a command line through every edition of one shell this machine has.
+export function dispatchThrough(shell, command) {
+  const editions = EDITIONS[shell];
+  assert(editions, 'no dispatcher model for shell: ' + shell);
+
+  return editions.flatMap(({ name, exe, args = PS_ARGS, verbatim = false, optional }) => {
+    const r = spawnSync(exe, args(command), {
+      encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: verbatim,
+    });
+    if (r.error && r.error.code === 'ENOENT' && optional) return [];
+    return [{ name, status: r.status, out: ((r.stdout || '') + (r.stderr || '')).trim() }];
+  });
+}
+
 // -- Fixture corruption ------------------------------------------------
 
 export const addBom = (file) => writeFileSync(file, '\uFEFF' + read(file), 'utf8');
@@ -111,7 +157,15 @@ function makeSandbox() {
       encoding: 'utf8',
       env: { ...process.env, HOME: home, USERPROFILE: home, PATH: path },
     });
-    return { status: r.status, out: (r.stdout || '') + (r.stderr || '') };
+    // Kept apart as well as merged: which stream a line came out of is itself
+    // behaviour, since a host injects a hook's stdout into the model's context
+    // and drops its stderr (CASE-32).
+    return {
+      status: r.status,
+      stdout: r.stdout || '',
+      stderr: r.stderr || '',
+      out: (r.stdout || '') + (r.stderr || ''),
+    };
   };
 
   return {

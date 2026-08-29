@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { HOME, readJson, toPosix } from './env.mjs';
+import { DISPATCH_PREFIX, opensWithQuotedPath } from './rules.mjs';
 
 // Both hosts use the same hooks.json shape:
 //   { hooks: { <Event>: [ { hooks: [ { type: "command", command } ] } ] } }
@@ -66,6 +67,11 @@ const claude = {
   sourceCommand: (hook) => hook.command,
   patchedCommand: (hook) => hook.command,
   applyPatch: (hook, ref) => { hook.command = ref; },
+  // The shells that may dispatch a command this host emits. Claude Code runs a
+  // Windows hook command through cmd.exe, the one shell that also accepts a
+  // quoted path in command position, so the reference below needs no prefix.
+  // The CASE-31 gate executes wrapperRef under every shell named here.
+  dispatchers: ['cmd'],
   wrapperRef: (wrapper, args) =>
     '"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd" ' + wrapper + (args ? ' ' + args : ''),
 };
@@ -97,6 +103,13 @@ function listCodexPlugins() {
   });
 }
 
+// A commandWindows this tool wrote before CASE-31 opens with a quoted path,
+// which a PowerShell dispatcher cannot parse. It is ours to re-derive, so it
+// counts as unpatched; a commandWindows a plugin author wrote is left alone.
+const isStaleCodexPatch = (hook) =>
+  String(hook.commandWindows || '').replace(/\\/g, '/').includes('_codex_hooks/run-hook.cmd')
+  && opensWithQuotedPath(hook.commandWindows);
+
 const codex = {
   id: 'codex',
   label: 'Codex',
@@ -111,12 +124,17 @@ const codex = {
   listPlugins: listCodexPlugins,
   // A hook that already carries commandWindows is patched; leave the portable
   // command alone so it still runs natively on macOS and Linux.
-  sourceCommand: (hook) => (hook.commandWindows ? null : hook.command),
+  sourceCommand: (hook) => (hook.commandWindows && !isStaleCodexPatch(hook) ? null : hook.command),
   patchedCommand: (hook) => hook.commandWindows,
   applyPatch: (hook, ref) => { hook.commandWindows = ref; },
-  // Codex dispatches commandWindows through cmd.exe, which wants backslashes.
+  // Codex hands commandWindows to the session shell, which is cmd.exe or
+  // PowerShell depending on how the session was started - so the reference has
+  // to carry the CASE-31 prefix. The backslashes are for the cmd.exe that ends
+  // up running the wrapper.
+  dispatchers: ['cmd', 'powershell'],
   wrapperRef: (wrapper, args) =>
-    '"${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd" ' + wrapper + (args ? ' ' + args : ''),
+    DISPATCH_PREFIX + '"${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd" ' + wrapper
+      + (args ? ' ' + args : ''),
 };
 
 export const HOSTS = { claude, codex };

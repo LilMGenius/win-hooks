@@ -1,6 +1,6 @@
 {
   "name": "win-hooks",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Windows auto-patcher for vibe coders.",
   "author": {
     "name": "LilMGenius",

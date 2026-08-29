@@ -9,9 +9,10 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addBom, assert, assertContains, assertLacks, read, REPO, summarize, test, toCrlf,
+  addBom, assert, assertContains, assertLacks, dispatchThrough, read, REPO, summarize, test, toCrlf,
 } from './harness.mjs';
-import { isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
+import { isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
+import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
   const { out } = sb.run('status', host);
@@ -357,7 +358,118 @@ test('CASE-28: a deleted Codex wrapper is rebuilt without a bare .py exec', (sb)
   assertLacks(join(plugin, '_codex_hooks/x'), 'exec "$PLUGIN_ROOT/hooks/x.py" "$@"');
 });
 
+// Every commandWindows in a hooks file, read as data rather than matched as
+// text - the field is JSON-escaped, so backslashes do not survive a substring
+// assertion intact.
+const codexPatches = (file) =>
+  [...eachHook(JSON.parse(read(file)))].map(({ hook }) => hook.commandWindows).filter(Boolean);
+
+test('CASE-31: a Codex command opens with a token every dispatcher executes', (sb) => {
+  const { hooks } = installCodexPython(sb, 'codexdispatch');
+  sb.run('heal', 'codex');
+  const generated = codexPatches(hooks);
+  assert(generated.length > 0, 'heal should have written a commandWindows');
+  for (const command of [...generated, ...codexPatches(join(REPO, 'hooks/codex-hooks.json'))]) {
+    assert(isDispatchable(command, HOSTS.codex.dispatchers),
+      'a leading quoted path is a PowerShell parse error: ' + command);
+  }
+  healthy(sb, 'codex');
+});
+
+test('CASE-31: a patch written before the prefix existed is re-derived', (sb) => {
+  const { hooks } = installCodexPython(sb, 'codexstale');
+  sb.run('heal', 'codex');
+  writeFileSync(hooks, read(hooks).replace(/cmd \/c /g, ''));
+  sb.run('heal', 'codex');
+  for (const command of codexPatches(hooks)) {
+    assert(/^cmd \/c /.test(command), 'a stale patch should be rewritten, got: ' + command);
+  }
+});
+
+// The class behind CASE-31: a host declares the shells that may dispatch what
+// it emits, and the reference the engine generates has to run under all of
+// them. Proven by executing it rather than by matching its text, and only
+// against shells that come from Windows itself, so the gate means the same
+// thing on any Windows machine rather than on the one that ran it.
+test('CASE-31: every host emits a reference its own dispatchers can run', (sb) => {
+  // A space in the plugin root - the case the rejected short-path fix lost.
+  const root = join(sb.dir, 'plugin root');
+
+  for (const host of Object.values(HOSTS)) {
+    const wrapperDir = join(root, host.wrapperDir);
+    mkdirSync(wrapperDir, { recursive: true });
+    // Exits non-zero when it receives no argument, so a pass proves the
+    // arguments arrived rather than merely that some shell started.
+    writeFileSync(join(wrapperDir, 'run-hook.cmd'),
+      '@echo off\r\nif "%~1"=="" exit /b 9\r\necho ran %*\r\nexit /b 0\r\n');
+
+    const command = host.wrapperRef('probe', '--flag').replace(/\$\{\w*PLUGIN_ROOT\}/g, root);
+    for (const shell of host.dispatchers) {
+      for (const r of dispatchThrough(shell, command)) {
+        assert(r.status === 0, host.id + ' emits a command ' + r.name + ' cannot run: '
+          + command + '\n        ' + r.out);
+      }
+    }
+  }
+});
+
 // -- The merged patch verb ---------------------------------------------
+
+// A hook whose happy path is silent is indistinguishable from a hook the host
+// never dispatched, and the run log cannot tell them apart either: a manual
+// repair writes the same line. So one surface says so out loud - stdout at
+// session start, which both hosts inject into the session as it stands - and
+// every other surface stays silent, because a UserPromptSubmit hook's stdout
+// lands in the model's context on every prompt.
+test('CASE-32: session start announces the run, and nothing else writes to stdout', (sb) => {
+  sb.install('shScript', 'case32');
+
+  const quiet = sb.run('heal', 'claude');
+  assert(quiet.stdout.trim() === '', 'a plain heal must leave stdout empty, got: ' + quiet.stdout);
+
+  const loud = sb.run('heal', 'claude', '--announce');
+  assert(/^win-hooks: /m.test(loud.stdout), 'an announced heal must report the run: ' + loud.stdout);
+  assert(loud.stdout.includes('hook file(s)'), 'and say what was scanned: ' + loud.stdout);
+
+  // Healing every host in one invocation announces each of them, so a session
+  // that repaired two hosts cannot read as though it repaired one.
+  const both = sb.run('heal', '--announce');
+  assert(both.stdout.split('\n').filter((l) => l.includes('hook file(s)')).length === 2,
+    'every host must announce its own run: ' + both.stdout);
+
+  // The shipped manifests are what actually decide this, per host and event.
+  for (const name of ['hooks/hooks.json', 'hooks/codex-hooks.json']) {
+    const data = JSON.parse(read(join(REPO, name)));
+    for (const { event, hook } of eachHook(data)) {
+      const announced = (hook.command + ' ' + (hook.commandWindows || '')).includes('--announce');
+      assert(announced === (event === 'SessionStart'),
+        name + ' ' + event + ' should ' + (event === 'SessionStart' ? '' : 'not ') + 'announce');
+    }
+  }
+});
+
+// Codex skips an untrusted hook in silence, so the tempting repair is to write
+// the trust hash back. A tool that can trust itself is a supply-chain hole, and
+// a sentence in AGENTS.md does not survive the next session that meets the
+// symptom - so the ban is a gate over the shipped bytes.
+test('CASE-33: nothing shipped can grant win-hooks its own Codex hook trust', () => {
+  const shipped = ['bin/win-hooks.mjs', 'hooks/win-hooks', 'hooks/run-hook.cmd',
+    ...readdirSync(join(REPO, 'src')).map((f) => 'src/' + f)];
+  for (const rel of shipped) {
+    const body = read(join(REPO, rel));
+    assert(!body.includes('trusted_hash'), rel + ' must never write a Codex trust hash');
+    assert(!body.includes('hooks.state'), rel + ' must never touch Codex hook trust state');
+  }
+
+  // config.toml is named once, as a path whose mtime is watched (CASE-26), and
+  // the module that names it cannot write at all.
+  const named = shipped.filter((rel) => read(join(REPO, rel)).includes('config.toml'));
+  assert(named.length === 1 && named[0] === 'src/hosts.mjs',
+    'only the host descriptor may name config.toml, got: ' + named.join(', '));
+  const hosts = read(join(REPO, 'src/hosts.mjs'));
+  assert(!/writeText|writeJson|writeFileSync|appendFileSync/.test(hosts),
+    'src/hosts.mjs reads the Codex registry and must never write it');
+});
 
 // How many times the engine has run a repair: every heal appends one line.
 const healRuns = (sb) => {

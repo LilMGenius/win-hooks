@@ -56,6 +56,21 @@ export function isIncompatible(cmd, { rootVar, isInstalled = () => true } = {}) 
   return false;
 }
 
+// CASE-31: the shell that dispatches a hook command is the host's choice, not
+// ours. Every Windows shell runs a bare command name in command position, but
+// only cmd.exe also accepts a quoted path there - PowerShell reads the leading
+// quote as a string expression and rejects every argument after it. A command
+// that has to survive an unknown dispatcher therefore opens with cmd /c, which
+// is a command name under both and hands the quoted path to the cmd.exe that
+// was wanted all along.
+export const DISPATCH_PREFIX = 'cmd /c ';
+
+export const opensWithQuotedPath = (cmd) => /^["']/.test(decode(cmd).trim());
+
+// Would this command survive every shell the host might dispatch it through?
+export const isDispatchable = (cmd, dispatchers) =>
+  !opensWithQuotedPath(cmd) || dispatchers.every((shell) => shell === 'cmd');
+
 // Wrapper filenames are extensionless, so Claude Code's Windows auto-detection
 // does not prepend "bash" to anything containing ".sh" (CASE-07).
 export function wrapperName(cmd, rootVar) {

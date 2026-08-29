@@ -63,7 +63,7 @@ None of that is your fault. Almost every plugin is written and tested on macOS o
 
 win-hooks repairs your plugins at every session start, including ones you install later and ones that break again after an update. Repairs are written next to the original file, never on top of it, and anything already working is left alone.
 
-A healthy run is silent. To look anyway:
+At the start of a session it says so in one line, so you can tell a clean run from a hook that never fired. To look closer:
 
 | Command | What it does |
 |---|---|
