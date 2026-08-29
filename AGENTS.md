@@ -24,15 +24,23 @@
 
 **Commit messages:** one bullet per line, no wrapping inside a bullet, no co-author tags, no version-bump lines.
 
-**Release notes are written once, in the tag.** There is no CHANGELOG: the annotated tag's message *is* the release notes, and the workflow reads it back through the API to build the release page, so the two cannot drift. Write it with `git tag -s vX.Y.Z -F <notes> --cleanup=verbatim`, shaped as:
+**Release notes are written once, in the tag.** There is no CHANGELOG: the annotated tag's message *is* the release notes, and the workflow reads it back through the API to build the release page, so nothing is written twice at release time. Write it with `git tag -s vX.Y.Z -F <notes> --cleanup=verbatim`, shaped as:
 
 - **Line 1 is an `## ` heading** — this version's one-line title. The release page's own title is always the bare `win-hooks X.Y.Z`, so the heading is where the story goes.
 - **Then two or three paragraphs of prose**, saying what changed for the person reading and why it was worth doing.
-- **Then the sections, in this order**, each one optional except the last two: `### New`, `### Fixed`, `### Also`, `### What it repairs (N issue types)`, `### Install`. The first three are bullets, one line each. The catalog is the same four bullets every release, updated in place, so a reader landing on any version sees the whole product.
+- **Then the sections, in this order**, each one optional except the last two: `### New`, `### Fixed`, `### Also`, `### What it repairs`, `### Install`. The first three are bullets, one line each.
+- **The catalog is the same four bullets every release**, updated in place, so a reader landing on any version sees the whole product. It carries no count: these are families, while `skills/patch/SKILL.md` holds the engine's report vocabulary, and a number on the heading reads as a claim about whichever set the reader last saw.
 - **`### Install` is last**, indented four spaces: a fenced block survives inside a tag message, but indenting is what the signature strip leaves alone.
 - **Credit a contribution in plain text** — `thanks to @user (#N)`, never `[@user](url)` or `[#N](url)`. GitHub builds the release page's Contributors list by scanning the body for bare `@mention` and `#issue` autolinks; wrapped in a markdown link they render identically and are counted as nothing, which is how v1.10.0 shipped its only outside contribution uncredited.
 
-**Fixing a published release.** Edit the tag message and the page together or they drift: `git tag -s -f vX.Y.Z <commit> -F <notes>` with `GIT_COMMITTER_DATE` set to the original tagger date, force-push the tag, then `gh release edit vX.Y.Z --notes-file <notes>`. Re-pushing a tag re-triggers `release.yml` at *that tag's* commit, so `npm publish` will fail on an already-published version — check whether the workflow existed at that commit before pushing.
+**Fixing a published release.** The tag message and the page are one artifact, so they move together or they drift.
+
+1. `gh workflow disable release` — a force-pushed tag re-triggers `release.yml` at *that tag's* commit, and `npm publish` fails on a version already on the registry.
+2. `git tag -s -f vX.Y.Z <commit> -F <notes> --cleanup=verbatim`, with `GIT_COMMITTER_DATE` held to the tag's original `%(taggerdate:raw)`. Assert the text being replaced was found before writing, and that the target commit and the tagger date survived.
+3. `git push --force origin vX.Y.Z`, then `gh release edit vX.Y.Z --notes-file <notes>`.
+4. `gh workflow enable release`, once `gh run list` shows the push queued nothing.
+
+The proof is a read-back through the API: the tag message with its signature block stripped equals the release body.
 
 ---
 
@@ -254,7 +262,7 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 ### CASE-13: Plugin update overwrites patches
 - **Symptom**: A plugin update — notably a mid-session `/plugin` bump — reinstalls `hooks.json` un-patched, so the patch is lost and the hooks break again.
 - **Fix**: Two triggers re-patch automatically: **SessionStart** at the start of every session, and **UserPromptSubmit** on the next prompt after a plugin's hooks change (CASE-26).
-- **Mid-session caveat**: both triggers edit `hooks.json` on **disk**, but Claude Code has already loaded the hook config for the running session, so the fresh patch applies on the **next** session or immediately after [`/reload-plugins`](https://code.claude.com/docs/en/plugins-reference), which reloads hook/MCP/LSP config from disk without a restart. It reloads *config* only and does not re-fire SessionStart, which is exactly why the per-prompt guard exists.
+- **Mid-session caveat**: both triggers edit `hooks.json` on **disk**, but Claude Code has already loaded the hook config for the running session, so the fresh patch applies on the **next** session or immediately after [`/reload-plugins`](https://code.claude.com/docs/en/plugins-reference), which reloads hook/MCP/LSP config from disk without a restart. It reloads *config* only and does not re-fire SessionStart, which is why the per-prompt guard exists (CASE-26).
 
 ### CASE-14: Hand-patched files give a false impression
 - **Symptom**: Works on the developer's machine, fails on everyone else's.
@@ -283,7 +291,7 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 - **Symptom**: A patched hook references a `_hooks/` file that no longer exists — `bash: .../_hooks/<wrapper>: No such file or directory` — or silently never dispatches when `run-hook.cmd` itself is gone. Causes: interrupted patching, or external deletion.
 - **Root cause**: Two gaps. The old check extracted the wrapper name with `grep -o '_hooks/run-hook.cmd[^"]*'`, which stopped at the escaped quote and lost the name, so the normal patched form reported a false "healthy". And the scanner skips already-patched hooks, so the advertised "just re-run patch" remedy could never fire.
 - **Fix**: `verify` parses the patched command properly and checks for both `run-hook.cmd` and the named wrapper in one pass, scoped to the wrapper dir so a plugin shipping its own `hooks/run-hook.cmd` is not falsely flagged. `verify --fix` **recreates** a missing wrapper: a passthrough body when the patched command forwards the real target as a trailing argument (the CASE-24 family), otherwise by replaying the wrapper-naming rule over `hooks.json.bak` to recover the original command and regenerate the body — routing back through `wrapperBody`, so a rebuilt Python wrapper gets a freshly probed interpreter (CASE-09). A missing `run-hook.cmd` is restored from the shipped template.
-- **Note**: `verify` heals the *disk* only; a running session that cached the old config still errors until `/reload-plugins` or the next session (CASE-13).
+- **Note**: `verify` heals the *disk* only, so a running session stays broken under the CASE-13 mid-session caveat.
 - **Issue types**: `wrapper_missing` and `cmd_missing` — same detection pass, same root-cause family, both auto-repaired.
 
 ### CASE-17: Silent error suppression hides failures
@@ -309,7 +317,7 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 
 ### CASE-26: Mid-session plugin update leaves patches un-restored until next session
 - **Symptom**: A plugin updated *within* a session (a `/plugin` bump, then `/reload-plugins`) reverts to an incompatible form and stays broken for the rest of the session. Running the fix by hand is the only remedy, and it recurs on every update.
-- **Root cause**: The only self-heal trigger was **SessionStart**, which fires once, before any mid-session update. `/plugin` overwrites the patched `hooks.json` afterwards (CASE-13), and `/reload-plugins` reloads config without re-firing SessionStart.
+- **Root cause**: The only self-heal trigger was **SessionStart**, which fires once, before any mid-session update. `/plugin` overwrites the patched `hooks.json` afterwards, and no reload re-fires SessionStart (CASE-13).
 - **Fix**: A second trigger — a `UserPromptSubmit` hook running `heal --changed-only`.
 - **Cost**: The guard must not enumerate. Listing Claude's plugins parses a manifest; listing Codex's spawns `codex plugin list --json` and reads a manifest per plugin — far too much to pay on every prompt. So each full run writes `seen.json`, the paths its stamp covers: every `hooks.json` it scanned, their parent directories, and the host's registry (`installed_plugins.json` and `settings.json` for Claude, `config.toml` for Codex, where every install, removal, and enable is recorded). The guard stats that list and nothing else. An updated hook moves a file's mtime, an added or removed hook file moves its directory's, an installed or removed plugin moves the registry's. A false positive costs one full heal; there is no false negative, because nothing can change a `hooks.json` without moving a watched path.
 - **Behavior**: When something did change it runs the same repair path as SessionStart and reports to stderr only. The stamp is written **last**, after every `hooks.json` the run rewrote, so a repair never re-triggers itself.
