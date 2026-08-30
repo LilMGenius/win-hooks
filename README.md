@@ -42,7 +42,7 @@ npx @lilmgenius/win-hooks
 
 That's the whole setup. No config, no flags, nothing to remember.
 
-You need Windows 10/11 and [Git for Windows](https://git-scm.com/download/win). Node.js already comes with Claude Code and Codex.
+You need Windows 10/11. Node.js already comes with Claude Code and Codex, and [Git for Windows](https://git-scm.com/download/win) is needed only for plugins whose hooks are shell scripts.
 
 ## What it fixes
 

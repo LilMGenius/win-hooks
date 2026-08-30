@@ -80,11 +80,11 @@ a hand-run repair writes the same line. win-hooks heals at every SessionStart,
 announcing the result in one line so a clean run is distinguishable from a hook
 that never fired (CASE-32). It heals again silently on the next prompt after a
 plugin's hooks change (CASE-26). No lines at all means it never dispatched -
-usually the plugin is disabled, Git Bash is missing, or Node is not on PATH. On
-Codex there is one more cause: an upgrade changes the hook manifest, which
-invalidates the trust hash Codex recorded for it, and an untrusted hook is
-skipped with no message at all (CASE-33). Running `patch` by hand still repairs
-everything; re-trusting the hook is the user's call, never win-hooks'.
+usually the plugin is disabled or Node is not on PATH. On Codex there is one
+more cause: an upgrade changes the hook manifest, which invalidates the trust
+hash Codex recorded for it, and an untrusted hook is skipped with no message at
+all (CASE-33). Running `patch` by hand still repairs everything; re-trusting
+the hook is the user's call, never win-hooks'.
 
 ## Report back
 
@@ -94,10 +94,10 @@ running session has already cached its hook config - tell the user to run
 
 ## Troubleshooting
 
-- **Still failing after a repair:** confirm Git Bash at
-  `C:\Program Files\Git\bin\bash.exe` (or set `WH_BASH_EXE` for a non-standard
-  install), read the plugin's `_hooks/hooks.map.json`, and run
-  `claude --debug hooks`.
+- **Still failing after a repair:** read the plugin's `_hooks/hooks.map.json` and
+  run `claude --debug hooks`. If the entry runs a shell script, confirm Git Bash
+  at `C:\Program Files\Git\bin\bash.exe`, or set `WH_BASH_EXE` for a
+  non-standard install.
 - **Only the Microsoft Store python3 stub is installed:** install a real Python
   from [python.org](https://www.python.org/) and restart.
 - **A plugin update reverted a repair:** expected. win-hooks re-patches on the

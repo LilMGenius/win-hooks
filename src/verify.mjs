@@ -49,9 +49,7 @@ function encodingCandidates(host, install, dirFiles) {
   return [...files].filter((f) => !/\.bak$|\.tmp$/.test(f) && existsSync(f));
 }
 
-// Directory-level checks, run once per install tree. A Codex plugin declares
-// one hooks.json per event, so this is where re-scanning the same directory
-// dozens of times would otherwise come from.
+// Directory-level checks, run once per install tree.
 function checkTree(host, install, report, repair) {
   const hookDir = join(install.path, host.hookDir);
   const rel = (file) => file.replace(install.path, '').replace(/^[\\/]/, '').replace(/\\/g, '/');
@@ -167,6 +165,20 @@ function checkHooksFile(host, install, plugin, report, repair) {
   }
 }
 
+// Codex declares one hooks.json per event, so many "plugins" share one install
+// tree. Group them, or every directory-level check runs once per hooks file.
+function byInstall(plugins) {
+  const trees = new Map();
+  for (const plugin of plugins) {
+    const tree = trees.get(plugin.installPath)
+      || { path: plugin.installPath, plugins: [], hooksFiles: [] };
+    tree.plugins.push(plugin);
+    tree.hooksFiles.push(plugin.hooksFile);
+    trees.set(plugin.installPath, tree);
+  }
+  return [...trees.values()];
+}
+
 export function verify(host, { fix = false, templateCmd = null, plugins = host.listPlugins() } = {}) {
   const issues = [];
   const fixes = [];
@@ -198,18 +210,4 @@ export function verify(host, { fix = false, templateCmd = null, plugins = host.l
   }
 
   return { issues, fixes };
-}
-
-// Codex declares one hooks.json per event, so many "plugins" share one install
-// tree. Group them, or every directory-level check runs once per hooks file.
-function byInstall(plugins) {
-  const trees = new Map();
-  for (const plugin of plugins) {
-    const tree = trees.get(plugin.installPath)
-      || { path: plugin.installPath, plugins: [], hooksFiles: [] };
-    tree.plugins.push(plugin);
-    tree.hooksFiles.push(plugin.hooksFile);
-    trees.set(plugin.installPath, tree);
-  }
-  return [...trees.values()];
 }
