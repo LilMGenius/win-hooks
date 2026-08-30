@@ -11,7 +11,7 @@
       "name": "win-hooks",
       "source": "./",
       "description": "Windows auto-patcher for vibe coders.",
-      "version": "1.13.0"
+      "version": "1.14.0"
     }
   ]
 }
