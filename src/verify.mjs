@@ -105,12 +105,11 @@ function checkTree(host, install, report, repair) {
   }
 }
 
-// The dispatcher is run-hook.cmd plus the run.mjs it starts. Present is not
-// enough: a copy from an older release still execs a wrapper file that the
-// descriptor map replaced, and a plugin that is already fully compatible never
-// re-enters patch setup to be refreshed there (CASE-27). Contents are compared
-// through the same normalizing read the encoding checks use, so a BOM or CRLF
-// is reported once, as corruption, and not a second time as staleness.
+// The dispatcher is run-hook.cmd plus the run.mjs it starts, and present is not
+// enough: a copy from an older release still execs the wrapper file the
+// descriptor map replaced, and a fully compatible plugin never re-enters patch
+// setup to be refreshed there (CASE-27). Contents compare through the
+// normalizing read, so a BOM or CRLF stays one report, as corruption.
 function checkDispatcher(host, hookDir, templateCmd, report, repair) {
   for (const name of DISPATCHER_FILES) {
     const target = join(hookDir, name);

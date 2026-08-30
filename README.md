@@ -61,7 +61,7 @@ None of that is your fault. Almost every plugin is written and tested on macOS o
 
 ## How it stays fixed
 
-win-hooks repairs your plugins at every session start, including ones you install later and ones that break again after an update. Repairs are written next to the original file, never on top of it, and anything already working is left alone.
+win-hooks repairs your plugins at every session start, including ones you install later, ones that break again after an update, and ones an older win-hooks left behind. Repairs are written next to the original file, never on top of it, and anything already working is left alone.
 
 At the start of a session it says so in one line, so you can tell a clean run from a hook that never fired. To look closer:
 
