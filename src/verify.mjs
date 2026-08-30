@@ -105,14 +105,37 @@ function checkTree(host, install, report, repair) {
   }
 }
 
+// The dispatcher is run-hook.cmd plus the run.mjs it starts. Present is not
+// enough: a copy from an older release still execs a wrapper file that the
+// descriptor map replaced, and a plugin that is already fully compatible never
+// re-enters patch setup to be refreshed there (CASE-27). Contents are compared
+// through the same normalizing read the encoding checks use, so a BOM or CRLF
+// is reported once, as corruption, and not a second time as staleness.
+function checkDispatcher(host, hookDir, templateCmd, report, repair) {
+  for (const name of DISPATCHER_FILES) {
+    const target = join(hookDir, name);
+    const shipped = templateCmd ? readOrNull(join(dirname(templateCmd), name)) : null;
+    const state = !existsSync(target) ? 'not found'
+      : shipped !== null && readOrNull(target) !== shipped ? 'is stale'
+      : null;
+    if (!state) continue;
+    report('cmd_missing', host.hookDir + '/' + name + ' ' + state);
+    repair((template) => {
+      if (!template) return null;
+      mkdirSync(hookDir, { recursive: true });
+      copyFileSync(join(dirname(template), name), target);
+      return 'restored ' + host.hookDir + '/' + name;
+    });
+  }
+}
+
 // Per-hooks.json checks: is it parseable, and does every hook it names exist?
-function checkHooksFile(host, install, plugin, report, repair) {
+function checkHooksFile(host, install, plugin, templateCmd, report, repair) {
   const hookDir = join(install.path, host.hookDir);
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return report('json_invalid', error);
 
-  const map = readHookMap(hookDir);
-  let needsRunHook = false;
+  const dispatched = [];
   for (const { hook } of eachHook(data)) {
     // A python hook still running bare on a machine with no usable interpreter
     // can never succeed; say so rather than failing silently (CASE-09/21).
@@ -122,9 +145,17 @@ function checkHooksFile(host, install, plugin, report, repair) {
 
     const patched = String(host.patchedCommand(hook) || '').replace(/\\/g, '/');
     if (!patched.includes(host.hookDir + '/run-hook.cmd')) continue;
-    needsRunHook = true;
+    dispatched.push(patched.replace(/^.*run-hook\.cmd"?\s*/i, ''));
+  }
+  if (!dispatched.length) return;
 
-    const rest = patched.replace(/^.*run-hook\.cmd"?\s*/i, '');
+  // Before the entry repairs below, not after: they delete the legacy wrapper
+  // file that a stale dispatcher is still exec'ing, and a run that refreshed
+  // the dispatcher second would leave the plugin dead in the gap.
+  checkDispatcher(host, hookDir, templateCmd, report, repair);
+
+  const map = readHookMap(hookDir);
+  for (const rest of dispatched) {
     const name = (rest.match(/^"?([^"\s]+)/) || [])[1];
     if (!name) { report('wrapper_missing', 'hook name is not parseable'); continue; }
     if (map[name]) continue;
@@ -148,19 +179,6 @@ function checkHooksFile(host, install, plugin, report, repair) {
       const legacy = join(hookDir, name);
       if ((readOrNull(legacy) || '').startsWith('#!/bin/bash')) rmSync(legacy);
       return 'added hook entry ' + name;
-    });
-  }
-
-  // The dispatcher is run-hook.cmd plus the run.mjs it starts; either one
-  // missing breaks every patched hook in the plugin, so both are one check.
-  for (const name of needsRunHook ? DISPATCHER_FILES : []) {
-    if (existsSync(join(hookDir, name))) continue;
-    report('cmd_missing', host.hookDir + '/' + name + ' not found');
-    repair((templateCmd) => {
-      if (!templateCmd) return null;
-      mkdirSync(hookDir, { recursive: true });
-      copyFileSync(join(dirname(templateCmd), name), join(hookDir, name));
-      return 'restored ' + host.hookDir + '/' + name;
     });
   }
 }
@@ -205,7 +223,7 @@ export function verify(host, { fix = false, templateCmd = null, plugins = host.l
 
     guard(install.plugins[0], (report, repair) => checkTree(host, install, report, repair));
     for (const plugin of install.plugins) {
-      guard(plugin, (report, repair) => checkHooksFile(host, install, plugin, report, repair));
+      guard(plugin, (report, repair) => checkHooksFile(host, install, plugin, templateCmd, report, repair));
     }
   }
 

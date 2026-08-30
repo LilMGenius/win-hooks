@@ -298,6 +298,19 @@ test('CASE-27: a stale run-hook.cmd is refreshed from the shipped template', (sb
   assertContains(join(plugin, '_hooks/run.mjs'), read(join(REPO, 'hooks/run.mjs')));
 });
 
+test('CASE-27: a stale dispatcher is caught by verify when setup never runs', (sb) => {
+  const plugin = sb.install('staleDispatcher', 'case27stale');
+  // Nothing about this plugin is incompatible, so the patcher walks past it and
+  // the refresh in setup never happens. Reporting it is verify\'s job alone, and
+  // the read-only status path has to see it too or the machine looks healthy.
+  const before = statusOf(sb);
+  assert(before.includes('cmd_missing'), 'status must report the stale dispatcher: ' + before);
+  sb.run('heal', 'claude');
+  assertContains(join(plugin, '_hooks/run.mjs'), read(join(REPO, 'hooks/run.mjs')));
+  assertContains(join(plugin, '_hooks/run-hook.cmd'), read(join(REPO, 'hooks/run-hook.cmd')));
+  healthy(sb, 'claude');
+});
+
 // -- State directory and the per-prompt guard --------------------------
 
 test('CASE-11: every heal records its own install path for the slash commands', (sb) => {

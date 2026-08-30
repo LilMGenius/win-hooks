@@ -111,7 +111,7 @@ export function inspect(hostId) {
     host,
     plugins,
     incompatible: findIncompatible(host, plugins),
-    issues: verify(host, { plugins }).issues,
+    issues: verify(host, { templateCmd: TEMPLATE_CMD, plugins }).issues,
     settings: fixSettings(host.settingsFile),
     log: readLog(host),
   };

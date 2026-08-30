@@ -23,9 +23,11 @@ const script = (body) => '#!/bin/bash\n' + body + '\n';
 // patched carry theirs the same way patch.mjs would have written it.
 const map = (entries) => JSON.stringify(entries, null, 2) + '\n';
 
-// verify only checks that a hook directory has its dispatcher, never what is
-// inside it, so the fixture copies say exactly that.
-const RUN_HOOK = ': placeholder - verify checks that this exists, never its contents\n';
+// Deliberately not the shipped template. verify requires the dispatcher to be
+// present *and* current, so every fixture carrying this starts out stale and is
+// refreshed by the first heal - which is the state a plugin patched by an older
+// release is really in.
+const RUN_HOOK = ': placeholder - an older release\'s dispatcher\n';
 
 export const FIXTURES = {
   // CASE-01/02/07. The BOM and CRLF cases are this same plugin with the
@@ -76,6 +78,17 @@ export const FIXTURES = {
     'hooks/session-start.sh': script('echo "session-start ran"'),
     ['_hooks/' + MAP_FILE]: map({ 'session-start': { exec: 'bash', target: 'bash' } }),
     '_hooks/run-hook.cmd': RUN_HOOK,
+  },
+
+  // CASE-27: patched by an older release and otherwise perfect - every hook has
+  // a sound entry, so nothing here ever re-enters patch setup and only verify
+  // can notice that both halves of the dispatcher are out of date.
+  staleDispatcher: {
+    'hooks/hooks.json': manifest('PreToolUse', '"' + R + '/_hooks/run-hook.cmd" my-hook'),
+    'hooks/my-hook.sh': script('echo "my-hook ran"'),
+    ['_hooks/' + MAP_FILE]: map({ 'my-hook': { exec: 'bash', target: 'hooks/my-hook.sh' } }),
+    '_hooks/run-hook.cmd': RUN_HOOK,
+    '_hooks/run.mjs': '// an older release\'s run.mjs\n',
   },
 };
 
