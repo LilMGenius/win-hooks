@@ -1,10 +1,10 @@
 // Host descriptors.
 //
 // Claude Code and Codex differ in four ways: how plugins are enumerated, which
-// variable names the plugin root, where wrappers live, and how a patch is
+// variable names the plugin root, where the hooks live, and how a patch is
 // recorded. Claude rewrites "command" in place; Codex adds a "commandWindows"
 // sibling so the portable command keeps working on macOS and Linux. Scanning,
-// wrapper generation, and verification are identical, so they are shared.
+// descriptor generation, and verification are identical, so they are shared.
 
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -54,7 +54,7 @@ const claude = {
   id: 'claude',
   label: 'Claude Code',
   rootVar: 'CLAUDE_PLUGIN_ROOT',
-  wrapperDir: '_hooks',
+  hookDir: '_hooks',
   bakSuffix: '.bak',
   stateDir: join(HOME, '.claude/win-hooks'),
   settingsFile: join(HOME, '.claude/settings.json'),
@@ -63,17 +63,17 @@ const claude = {
   registry: [join(HOME, '.claude/plugins/installed_plugins.json'), join(HOME, '.claude/settings.json')],
   listPlugins: listClaudePlugins,
   // Claude replaces the command outright, so an already-patched hook is one
-  // that already points at our wrapper - which isIncompatible sees as a .cmd.
+  // that already points at our dispatcher - which isIncompatible sees as a .cmd.
   sourceCommand: (hook) => hook.command,
   patchedCommand: (hook) => hook.command,
   applyPatch: (hook, ref) => { hook.command = ref; },
   // The shells that may dispatch a command this host emits. Claude Code runs a
   // Windows hook command through cmd.exe, the one shell that also accepts a
   // quoted path in command position, so the reference below needs no prefix.
-  // The CASE-31 gate executes wrapperRef under every shell named here.
+  // The CASE-31 gate executes hookRef under every shell named here.
   dispatchers: ['cmd'],
-  wrapperRef: (wrapper, args) =>
-    '"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd" ' + wrapper + (args ? ' ' + args : ''),
+  hookRef: (name, args) =>
+    '"${CLAUDE_PLUGIN_ROOT}/_hooks/run-hook.cmd" ' + name + (args ? ' ' + args : ''),
 };
 
 // ── Codex ─────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ const codex = {
   id: 'codex',
   label: 'Codex',
   rootVar: 'PLUGIN_ROOT',
-  wrapperDir: '_codex_hooks',
+  hookDir: '_codex_hooks',
   bakSuffix: '.codex-win-hooks.bak',
   stateDir: join(HOME, '.codex/win-hooks'),
   settingsFile: null,
@@ -130,10 +130,10 @@ const codex = {
   // Codex hands commandWindows to the session shell, which is cmd.exe or
   // PowerShell depending on how the session was started - so the reference has
   // to carry the CASE-31 prefix. The backslashes are for the cmd.exe that ends
-  // up running the wrapper.
+  // up running the hook.
   dispatchers: ['cmd', 'powershell'],
-  wrapperRef: (wrapper, args) =>
-    DISPATCH_PREFIX + '"${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd" ' + wrapper
+  hookRef: (name, args) =>
+    DISPATCH_PREFIX + '"${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd" ' + name
       + (args ? ' ' + args : ''),
 };
 

@@ -22,13 +22,13 @@ export function relPath(cmd, rootVar) {
 }
 
 // Arguments that follow the script path and must survive the rewrite. The path
-// itself is baked into the wrapper body, so re-appending it would be a bug.
+// itself is part of the descriptor, so re-appending it would be a bug.
 export function trailingArgs(cmd, rootVar) {
   const re = new RegExp('.*"?\\$(?:\\{' + rootVar + '\\}|' + rootVar + ')"?/[A-Za-z0-9_./-]+');
   return decode(cmd).replace(re, '').replace(/^["\s]+|\s+$/g, '');
 }
 
-// Does this hook command need a Windows wrapper?
+// Does this hook command need to be replaced on Windows?
 //
 // isInstalled is injected so the bare-binary rule stays testable, and so the
 // Codex lane can opt out of it.
@@ -72,14 +72,14 @@ export const opensWithQuotedPath = (cmd) => /^["']/.test(decode(cmd).trim());
 export const isDispatchable = (cmd, dispatchers) =>
   !opensWithQuotedPath(cmd) || dispatchers.every((shell) => shell === 'cmd');
 
-// The win-hooks-owned files in a wrapper directory. They are copied in, never
-// generated per hook, so everything else in that directory is a wrapper - which
-// is how the verifier tells the two apart without a naming convention.
+// The win-hooks-owned files in a hook directory. They are copied in from the
+// shipped template and never generated per hook, so a file sitting there under
+// any other name is a leftover from the pre-descriptor layout.
 export const DISPATCHER_FILES = ['run-hook.cmd', 'run.mjs'];
 
-// Wrapper filenames are extensionless, so Claude Code's Windows auto-detection
+// Hook names are extensionless, so Claude Code's Windows auto-detection
 // does not prepend "bash" to anything containing ".sh" (CASE-07).
-export function wrapperName(cmd, rootVar) {
+export function hookName(cmd, rootVar) {
   const c = decode(cmd);
 
   // A keyed invocation names itself after its subject:
@@ -94,7 +94,7 @@ export function wrapperName(cmd, rootVar) {
   }
 
   const name = c.trim().split(/\s+/).slice(0, 3).join('-').replace(/[^A-Za-z0-9-]/g, '');
-  return name || 'hook-wrapper';
+  return name || 'hook';
 }
 
 // Every patched hook is one JSON descriptor in this file, which run.mjs reads.

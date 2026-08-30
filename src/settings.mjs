@@ -2,7 +2,7 @@
 //
 // These hooks are dispatched through cmd.exe, whose environment is not Git
 // Bash's. Two things break as a result, and both are rewrites of the command
-// string rather than wrapper generation - so they live apart from the plugin
+// string rather than a hook descriptor - so they live apart from the plugin
 // pipeline.
 
 import { existsSync } from 'node:fs';

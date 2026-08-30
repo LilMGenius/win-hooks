@@ -22,7 +22,7 @@ const script = (body) => '#!/bin/bash\n' + body + '\n';
 // patched carry theirs the same way patch.mjs would have written it.
 const map = (entries) => JSON.stringify(entries, null, 2) + '\n';
 
-// verify only checks that a wrapper directory has its dispatcher, never what is
+// verify only checks that a hook directory has its dispatcher, never what is
 // inside it, so the fixture copies say exactly that.
 const RUN_HOOK = ': placeholder - verify checks that this exists, never its contents\n';
 
@@ -45,8 +45,8 @@ export const FIXTURES = {
     'hooks/x.py': 'print("ok")\n',
   },
 
-  // CASE-16: patched hooks.json, backup intact, wrapper deleted.
-  wrapperMissing: {
+  // CASE-16: patched hooks.json, backup intact, descriptor deleted.
+  entryMissing: {
     'hooks/hooks.json': manifest('PreToolUse', '"' + R + '/_hooks/run-hook.cmd" my-hook'),
     'hooks/hooks.json.bak': manifest('PreToolUse', '"' + R + '/hooks/my-hook.sh"'),
     'hooks/my-hook.sh': script('echo "my-hook ran"'),

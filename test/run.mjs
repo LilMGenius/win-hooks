@@ -12,7 +12,7 @@ import {
   addBom, assert, assertContains, assertLacks, dispatchThrough, hookMap, read, REPO, summarize, test,
   toCrlf,
 } from './harness.mjs';
-import { isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
+import { isDispatchable, isIncompatible, trailingArgs, hookName } from '../src/rules.mjs';
 import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
@@ -33,7 +33,7 @@ const writeSettings = (sb, command) => {
 const claude = { rootVar: 'CLAUDE_PLUGIN_ROOT', isInstalled: () => false };
 const R = '${CLAUDE_PLUGIN_ROOT}';
 
-test('CASE-07: a .sh target is incompatible, a .cmd wrapper is not', () => {
+test('CASE-07: a .sh target is incompatible, a .cmd command is not', () => {
   assert(isIncompatible('bash ' + R + '/hooks/check.sh', claude), '.sh should be flagged');
   assert(!isIncompatible('"' + R + '/_hooks/run-hook.cmd" check', claude), 'already-patched should be skipped');
   assert(!isIncompatible('node ' + R + '/hooks/check.js', claude), 'node resolves under both dispatchers');
@@ -54,9 +54,9 @@ test('CASE-10: only the arguments after the script path are preserved', () => {
   assert(trailingArgs('bash ' + R + '/hooks/check.sh', 'CLAUDE_PLUGIN_ROOT') === '', 'no arguments means none');
 });
 
-test('wrapper names are extensionless and derived from the target', () => {
-  assert(wrapperName('bash ' + R + '/hooks/my_hook.sh', 'CLAUDE_PLUGIN_ROOT') === 'my-hook', 'underscore -> dash, no extension');
-  assert(wrapperName('tool mcp -k inject-defaults', 'CLAUDE_PLUGIN_ROOT') === 'inject-defaults', 'keyed invocation names itself');
+test('hook names are extensionless and derived from the target', () => {
+  assert(hookName('bash ' + R + '/hooks/my_hook.sh', 'CLAUDE_PLUGIN_ROOT') === 'my-hook', 'underscore -> dash, no extension');
+  assert(hookName('tool mcp -k inject-defaults', 'CLAUDE_PLUGIN_ROOT') === 'inject-defaults', 'keyed invocation names itself');
 });
 
 // -- Shipped files: what win-hooks cannot repair for itself ------------
@@ -90,7 +90,7 @@ test('CASE-17: no blanket error suppression in the engine', () => {
 
 // -- Claude Code pipeline ----------------------------------------------
 
-test('CASE-07: a bash-prefixed .sh hook gets a wrapper', (sb) => {
+test('CASE-07: a bash-prefixed .sh hook gets a descriptor', (sb) => {
   const plugin = sb.install('shScript', 'case07');
   sb.run('heal', 'claude');
   assertContains(join(plugin, 'hooks/hooks.json'), '_hooks/run-hook.cmd');
@@ -179,7 +179,7 @@ test('CASE-12: only the registered install path is patched', (sb) => {
   const before = read(join(stale, 'hooks/hooks.json'));
   sb.run('heal', 'claude');
   assert(read(join(stale, 'hooks/hooks.json')) === before, 'a cached version the registry does not list must be left alone');
-  assert(!existsSync(join(stale, '_hooks')), 'and must not gain a wrapper directory');
+  assert(!existsSync(join(stale, '_hooks')), 'and must not gain a hook directory');
 });
 
 test('CASE-13: a plugin update that reverts hooks.json is re-patched', (sb) => {
@@ -241,7 +241,7 @@ test('CASE-15: verify reports what the scanner cannot see', (sb) => {
 });
 
 test('CASE-16: a missing hook entry is rebuilt from hooks.json.bak', (sb) => {
-  const plugin = sb.install('wrapperMissing', 'case16');
+  const plugin = sb.install('entryMissing', 'case16');
   assert(!existsSync(join(plugin, '_hooks/hooks.map.json')), 'fixture should start with no descriptor at all');
   sb.run('heal', 'claude');
   const entry = hookMap(plugin)['my-hook'];
@@ -329,7 +329,7 @@ test('CASE-26: the hot path enumerates nothing when nothing changed', (sb) => {
 test('CASE-26: the hot path still heals a newly installed plugin', (sb) => {
   sb.install('shScript', 'first');
   sb.run('heal', 'claude');
-  const plugin = sb.install('wrapperMissing', 'second');
+  const plugin = sb.install('entryMissing', 'second');
   sb.run('heal', 'claude', '--changed-only');
   assert(hookMap(plugin)['my-hook'], 'a plugin installed after the stamp should still be healed');
 });
@@ -357,7 +357,7 @@ test('CASE-29: a PATH bash that cannot read Windows paths is refused', (sb) => {
 // -- Codex -------------------------------------------------------------
 //
 // Codex keeps the portable `command` and adds `commandWindows`. This guards
-// the CASE-09-parity regression where a python wrapper exec'd the bare .py.
+// the CASE-09-parity regression where a python hook exec'd the bare .py.
 
 // Codex hooks name the root PLUGIN_ROOT, not CLAUDE_PLUGIN_ROOT.
 const installCodexPython = (sb, name) => {
@@ -425,14 +425,14 @@ test('CASE-31: every host emits a reference its own dispatchers can run', (sb) =
   const root = join(sb.dir, 'plugin root');
 
   for (const host of Object.values(HOSTS)) {
-    const wrapperDir = join(root, host.wrapperDir);
-    mkdirSync(wrapperDir, { recursive: true });
+    const hookDir = join(root, host.hookDir);
+    mkdirSync(hookDir, { recursive: true });
     // Exits non-zero when it receives no argument, so a pass proves the
     // arguments arrived rather than merely that some shell started.
-    writeFileSync(join(wrapperDir, 'run-hook.cmd'),
+    writeFileSync(join(hookDir, 'run-hook.cmd'),
       '@echo off\r\nif "%~1"=="" exit /b 9\r\necho ran %*\r\nexit /b 0\r\n');
 
-    const command = host.wrapperRef('probe', '--flag').replace(/\$\{\w*PLUGIN_ROOT\}/g, root);
+    const command = host.hookRef('probe', '--flag').replace(/\$\{\w*PLUGIN_ROOT\}/g, root);
     for (const shell of host.dispatchers) {
       for (const r of dispatchThrough(shell, command)) {
         assert(r.status === 0, host.id + ' emits a command ' + r.name + ' cannot run: '

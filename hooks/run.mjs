@@ -1,6 +1,6 @@
 // The dispatcher every patched hook lands in, one step after run-hook.cmd.
 //
-// This file is copied verbatim into each patched plugin's wrapper directory, so
+// This file is copied verbatim into each patched plugin's hook directory, so
 // it must not import anything from src/: there is no src/ beside it there. The
 // bash resolution and the descriptor shapes below are therefore deliberately a
 // second copy of what src/env.mjs and src/rules.mjs own, rather than a shared

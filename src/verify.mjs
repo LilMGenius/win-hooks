@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { dirname, join } from 'node:path';
 import { hasBom, hasCrlf, readJson, readText, resolvePython, sanitize, writeText } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { brokenEntry, DISPATCHER_FILES, hookEntry, MAP_FILE, NEUTRALIZED_SCRIPT, readHookMap, relPath, wrapperName, writeHookMap } from './rules.mjs';
+import { brokenEntry, DISPATCHER_FILES, hookEntry, MAP_FILE, NEUTRALIZED_SCRIPT, readHookMap, relPath, hookName, writeHookMap } from './rules.mjs';
 
 const listFiles = (dir) => {
   try {
@@ -24,21 +24,21 @@ const readOrNull = (file) => {
 };
 
 // Recover the pre-patch command for a hook by replaying the naming rule over
-// the backups. That is what lets a deleted wrapper be rebuilt exactly (CASE-16).
-function originalCommandFor(host, hooksFiles, wrapper) {
+// the backups. That is what lets a deleted hook entry be rebuilt exactly (CASE-16).
+function originalCommandFor(host, hooksFiles, name) {
   for (const file of hooksFiles) {
     const bak = readJson(file + host.bakSuffix);
     if (!bak.ok) continue;
     for (const { hook } of eachHook(bak.data)) {
       const command = hook.command;
-      if (command && wrapperName(command, host.rootVar) === wrapper) return command;
+      if (command && hookName(command, host.rootVar) === name) return command;
     }
   }
   return null;
 }
 
 // Every file in one install whose encoding matters: the hook directories, plus
-// anything a hooks.json points at, so a wrapper parked in a nonstandard subdir
+// anything a hooks.json points at, so a script parked in a nonstandard subdir
 // (scripts/) is not missed.
 function encodingCandidates(host, install, dirFiles) {
   const files = new Set([...install.hooksFiles, ...dirFiles]);
@@ -53,9 +53,9 @@ function encodingCandidates(host, install, dirFiles) {
 // one hooks.json per event, so this is where re-scanning the same directory
 // dozens of times would otherwise come from.
 function checkTree(host, install, report, repair) {
-  const wrapperDir = join(install.path, host.wrapperDir);
+  const hookDir = join(install.path, host.hookDir);
   const rel = (file) => file.replace(install.path, '').replace(/^[\\/]/, '').replace(/\\/g, '/');
-  const dirFiles = [...listFiles(join(install.path, 'hooks')), ...listFiles(wrapperDir)];
+  const dirFiles = [...listFiles(join(install.path, 'hooks')), ...listFiles(hookDir)];
 
   // ── Encoding (CASE-01/02/03) ──────────────────────────────────────
   for (const file of encodingCandidates(host, install, dirFiles)) {
@@ -87,7 +87,7 @@ function checkTree(host, install, report, repair) {
   }
 
   // ── CASE-24: a hook descriptor whose target cannot run ──────────────
-  const map = readHookMap(wrapperDir);
+  const map = readHookMap(hookDir);
   for (const [name, entry] of Object.entries(map)) {
     const broken = brokenEntry(entry, install.path, existsSync);
     if (!broken) continue;
@@ -101,7 +101,7 @@ function checkTree(host, install, report, repair) {
       map[name] = rebuilt && !brokenEntry(rebuilt, install.path, existsSync)
         ? rebuilt
         : { disabled: broken.rel + ' is not on disk' };
-      writeHookMap(wrapperDir, map);
+      writeHookMap(hookDir, map);
       return 'repaired hook entry ' + name;
     });
   }
@@ -109,11 +109,11 @@ function checkTree(host, install, report, repair) {
 
 // Per-hooks.json checks: is it parseable, and does every hook it names exist?
 function checkHooksFile(host, install, plugin, report, repair) {
-  const wrapperDir = join(install.path, host.wrapperDir);
+  const hookDir = join(install.path, host.hookDir);
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return report('json_invalid', error);
 
-  const map = readHookMap(wrapperDir);
+  const map = readHookMap(hookDir);
   let needsRunHook = false;
   for (const { hook } of eachHook(data)) {
     // A python hook still running bare on a machine with no usable interpreter
@@ -123,46 +123,46 @@ function checkHooksFile(host, install, plugin, report, repair) {
     }
 
     const patched = String(host.patchedCommand(hook) || '').replace(/\\/g, '/');
-    if (!patched.includes(host.wrapperDir + '/run-hook.cmd')) continue;
+    if (!patched.includes(host.hookDir + '/run-hook.cmd')) continue;
     needsRunHook = true;
 
     const rest = patched.replace(/^.*run-hook\.cmd"?\s*/i, '');
-    const wrapper = (rest.match(/^"?([^"\s]+)/) || [])[1];
-    if (!wrapper) { report('wrapper_missing', 'wrapper name is not parseable'); continue; }
-    if (map[wrapper]) continue;
+    const name = (rest.match(/^"?([^"\s]+)/) || [])[1];
+    if (!name) { report('wrapper_missing', 'hook name is not parseable'); continue; }
+    if (map[name]) continue;
 
-    report('wrapper_missing', MAP_FILE + ' has no entry for ' + wrapper);
+    report('wrapper_missing', MAP_FILE + ' has no entry for ' + name);
     repair(() => {
       // An older patch form forwarded the real target as a trailing argument;
       // it was handed to bash, so that is the entry it becomes.
       const forwarded = relPath(rest, host.rootVar);
-      const original = forwarded ? null : originalCommandFor(host, install.hooksFiles, wrapper);
-      if (!forwarded && !original) return 'could not rebuild ' + wrapper + ' (no usable backup)';
-      mkdirSync(wrapperDir, { recursive: true });
-      const merged = readHookMap(wrapperDir);
-      merged[wrapper] = forwarded
+      const original = forwarded ? null : originalCommandFor(host, install.hooksFiles, name);
+      if (!forwarded && !original) return 'could not rebuild ' + name + ' (no usable backup)';
+      mkdirSync(hookDir, { recursive: true });
+      const merged = readHookMap(hookDir);
+      merged[name] = forwarded
         ? { exec: 'bash', target: forwarded }
         : hookEntry(original, host.rootVar);
-      writeHookMap(wrapperDir, merged);
+      writeHookMap(hookDir, merged);
       // A pre-map wrapper file of the same name is now shadowed by the entry;
       // dropping it keeps the fallback in run.mjs a migration bridge rather
       // than a second supported layout.
-      const legacy = join(wrapperDir, wrapper);
+      const legacy = join(hookDir, name);
       if ((readOrNull(legacy) || '').startsWith('#!/bin/bash')) rmSync(legacy);
-      return 'added hook entry ' + wrapper;
+      return 'added hook entry ' + name;
     });
   }
 
   // The dispatcher is run-hook.cmd plus the run.mjs it starts; either one
   // missing breaks every patched hook in the plugin, so both are one check.
   for (const name of needsRunHook ? DISPATCHER_FILES : []) {
-    if (existsSync(join(wrapperDir, name))) continue;
-    report('cmd_missing', host.wrapperDir + '/' + name + ' not found');
+    if (existsSync(join(hookDir, name))) continue;
+    report('cmd_missing', host.hookDir + '/' + name + ' not found');
     repair((templateCmd) => {
       if (!templateCmd) return null;
-      mkdirSync(wrapperDir, { recursive: true });
-      copyFileSync(join(dirname(templateCmd), name), join(wrapperDir, name));
-      return 'restored ' + host.wrapperDir + '/' + name;
+      mkdirSync(hookDir, { recursive: true });
+      copyFileSync(join(dirname(templateCmd), name), join(hookDir, name));
+      return 'restored ' + host.hookDir + '/' + name;
     });
   }
 }

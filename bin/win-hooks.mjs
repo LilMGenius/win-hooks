@@ -68,7 +68,7 @@ function announcement({ host, scanned, patched, issues, fixes }) {
 
 function summarize({ host, patched, failed, settings, issues, fixes }) {
   const lines = [];
-  for (const p of patched) lines.push('win-hooks: patched ' + p.plugin.id + ' (' + p.wrappers.join(', ') + ')');
+  for (const p of patched) lines.push('win-hooks: patched ' + p.plugin.id + ' (' + p.hooks.join(', ') + ')');
   for (const f of failed) lines.push('win-hooks: could not patch ' + f.plugin.id + ' - ' + f.error);
   if (settings.length) lines.push('win-hooks: repaired ' + settings.length + ' hook command(s) in ' + host.label + ' settings');
   for (const f of fixes) lines.push('win-hooks: ' + f);

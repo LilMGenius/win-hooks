@@ -8,11 +8,11 @@ import { mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { backupOnce, hasCommand, readJson, sanitize, writeJson } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { DISPATCHER_FILES, hookEntry, isIncompatible, readHookMap, trailingArgs, wrapperName, writeHookMap } from './rules.mjs';
+import { DISPATCHER_FILES, hookEntry, isIncompatible, readHookMap, trailingArgs, hookName, writeHookMap } from './rules.mjs';
 
 const scanOpts = (host) => ({ rootVar: host.rootVar, isInstalled: hasCommand });
 
-// Hooks in this plugin that still need a Windows wrapper.
+// Hooks in this plugin that still need a Windows-safe replacement.
 function incompatibleHooks(host, plugin) {
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return { error };
@@ -30,37 +30,37 @@ function incompatibleHooks(host, plugin) {
 // overwhelmingly common case, which must stay cheap.
 function patchPlugin(host, plugin, templateCmd) {
   // BOM/CRLF are corruption in their own right (CASE-01/02/03); clear them
-  // whether or not this plugin turns out to need a wrapper.
+  // whether or not this plugin turns out to need patching.
   sanitize(plugin.hooksFile);
   const { error, data, targets } = incompatibleHooks(host, plugin);
   if (error) return { plugin, error: 'hooks.json is not valid JSON: ' + error };
   if (!targets.length) return null;
 
-  const wrapperDir = join(plugin.installPath, host.wrapperDir);
-  mkdirSync(wrapperDir, { recursive: true });
+  const hookDir = join(plugin.installPath, host.hookDir);
+  mkdirSync(hookDir, { recursive: true });
 
   // Always refresh the dispatcher (CASE-27). It is win-hooks-owned
   // infrastructure users never edit, so template fixes must reach
   // already-patched plugins - and both files move together, because the batch
   // half does nothing except start the run.mjs beside it.
   for (const name of DISPATCHER_FILES) {
-    copyFileSync(join(dirname(templateCmd), name), join(wrapperDir, name));
+    copyFileSync(join(dirname(templateCmd), name), join(hookDir, name));
   }
   backupOnce(plugin.hooksFile, host.bakSuffix);
 
   // Merged, not overwritten: Codex declares one hooks.json per event, so this
   // plugin's other events have already written their entries into this map.
-  const map = readHookMap(wrapperDir);
-  const wrappers = [];
+  const map = readHookMap(hookDir);
+  const hooks = [];
   for (const { hook, command } of targets) {
-    const name = wrapperName(command, host.rootVar);
+    const name = hookName(command, host.rootVar);
     map[name] = hookEntry(command, host.rootVar);
-    host.applyPatch(hook, host.wrapperRef(name, trailingArgs(command, host.rootVar)));
-    wrappers.push(name);
+    host.applyPatch(hook, host.hookRef(name, trailingArgs(command, host.rootVar)));
+    hooks.push(name);
   }
-  writeHookMap(wrapperDir, map);
+  writeHookMap(hookDir, map);
   writeJson(plugin.hooksFile, data);
-  return { plugin, wrappers };
+  return { plugin, hooks };
 }
 
 export function patchAll(host, templateCmd, plugins = host.listPlugins()) {
