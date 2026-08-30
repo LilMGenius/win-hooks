@@ -4,11 +4,11 @@
 // JSON is parsed rather than pattern-matched, a malformed result is impossible
 // by construction - no write-then-validate-then-restore dance is needed.
 
-import { existsSync, mkdirSync, copyFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { backupOnce, hasCommand, readJson, sanitize, writeJson, writeText } from './env.mjs';
+import { backupOnce, hasCommand, readJson, sanitize, writeJson } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { DISPATCHER_FILES, isIncompatible, trailingArgs, wrapperBody, wrapperName } from './rules.mjs';
+import { DISPATCHER_FILES, hookEntry, isIncompatible, readHookMap, trailingArgs, wrapperName, writeHookMap } from './rules.mjs';
 
 const scanOpts = (host) => ({ rootVar: host.rootVar, isInstalled: hasCommand });
 
@@ -48,22 +48,17 @@ function patchPlugin(host, plugin, templateCmd) {
   }
   backupOnce(plugin.hooksFile, host.bakSuffix);
 
+  // Merged, not overwritten: Codex declares one hooks.json per event, so this
+  // plugin's other events have already written their entries into this map.
+  const map = readHookMap(wrapperDir);
   const wrappers = [];
   for (const { hook, command } of targets) {
     const name = wrapperName(command, host.rootVar);
-    const body = wrapperBody(command, host.rootVar);
-    const file = join(wrapperDir, name);
-
-    // Never clobber a file that is not one of ours.
-    const existing = existsSync(file) ? readFileSync(file, 'utf8') : null;
-    if (existing !== null && !existing.startsWith('#!/bin/bash')) continue;
-    if (existing !== body) writeText(file, body);
-
+    map[name] = hookEntry(command, host.rootVar);
     host.applyPatch(hook, host.wrapperRef(name, trailingArgs(command, host.rootVar)));
     wrappers.push(name);
   }
-  if (!wrappers.length) return null;
-
+  writeHookMap(wrapperDir, map);
   writeJson(plugin.hooksFile, data);
   return { plugin, wrappers };
 }

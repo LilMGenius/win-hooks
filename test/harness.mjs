@@ -79,6 +79,10 @@ export const assertContains = (file, text) =>
 export const assertLacks = (file, text) =>
   assert(!read(file).includes(text), file + ' should NOT contain: ' + text);
 
+// The descriptor file a patched plugin carries: one entry per patched hook.
+export const hookMap = (pluginRoot, dir = '_hooks') =>
+  JSON.parse(read(join(pluginRoot, dir, 'hooks.map.json')));
+
 // -- Dispatchers -------------------------------------------------------
 
 // How to hand one command line to each shell a Windows host might dispatch a
@@ -129,6 +133,21 @@ export function dispatchThrough(shell, command) {
 
 export const addBom = (file) => writeFileSync(file, '\uFEFF' + read(file), 'utf8');
 export const toCrlf = (file) => writeFileSync(file, read(file).replace(/\n/g, '\r\n'), 'utf8');
+
+// -- Hook dispatch -----------------------------------------------------
+
+// The two steps a real Windows host takes: cmd.exe runs run-hook.cmd, which
+// starts the run.mjs beside it. node is handed over in the environment rather
+// than looked up, because a caller narrowing PATH is narrowing it to control
+// which bash is reachable, and losing node with it would prove nothing.
+function runHook(hookDir, hook, path) {
+  const r = spawnSync(join(SYSTEM32, 'cmd.exe'),
+    ['/d', '/s', '/c', join(hookDir, 'run-hook.cmd'), hook],
+    { encoding: 'utf8',
+      windowsHide: true,
+      env: { SystemRoot: process.env.SystemRoot, PATH: path, WH_NODE_EXE: process.execPath } });
+  return { status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+}
 
 // -- Sandbox -----------------------------------------------------------
 
@@ -219,12 +238,10 @@ function makeSandbox() {
       }
     },
 
-    // Dispatch a hook the way Windows really does - cmd.exe running the shipped
-    // run-hook.cmd, which starts the shipped run.mjs - over a real plugin
-    // layout, with PATH under the test's control. The hardcoded Git for Windows
-    // paths are redirected to a drive that cannot exist, so what is left is
-    // exactly the PATH resolution under test (CASE-29). node is handed over by
-    // WH_NODE_EXE, because what PATH is controlling here is bash, not node.
+    // Dispatch a hook over a synthetic plugin layout with PATH under the
+    // test's control. The hardcoded Git for Windows paths are redirected to a
+    // drive that cannot exist, so what is left is exactly the PATH resolution
+    // under test (CASE-29).
     dispatch(hook, { path = SYSTEM32, body = '#!/bin/bash\necho ran\n' } = {}) {
       const pluginRoot = join(dir, 'dispatch');
       const hookDir = join(pluginRoot, '_hooks');
@@ -236,12 +253,13 @@ function makeSandbox() {
       writeFileSync(join(hookDir, 'hooks.map.json'),
         JSON.stringify({ [hook]: { exec: 'bash', target: 'hooks/' + hook } }));
       writeFileSync(join(pluginRoot, 'hooks', hook), body);
-      const r = spawnSync(join(SYSTEM32, 'cmd.exe'),
-        ['/d', '/s', '/c', join(hookDir, 'run-hook.cmd'), hook],
-        { encoding: 'utf8', windowsHide: true,
-          env: { SystemRoot: process.env.SystemRoot, PATH: path, WH_NODE_EXE: process.execPath } });
-      return { status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+      return runHook(hookDir, hook, path);
     },
+
+    // Dispatch a hook of a plugin win-hooks really patched, over the machine's
+    // own PATH: the end-to-end proof that a patch produces something that runs.
+    exec: (pluginRoot, hook, hookDir = '_hooks') =>
+      runHook(join(pluginRoot, hookDir), hook, process.env.PATH),
 
     // Run the real CLI against this sandbox.
     run: (...args) => cli(args, dir + ';' + process.env.PATH),

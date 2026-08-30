@@ -9,9 +9,10 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  addBom, assert, assertContains, assertLacks, dispatchThrough, read, REPO, summarize, test, toCrlf,
+  addBom, assert, assertContains, assertLacks, dispatchThrough, hookMap, read, REPO, summarize, test,
+  toCrlf,
 } from './harness.mjs';
-import { DISPATCHER_FILES as DISPATCHER, isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
+import { isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
 import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
@@ -93,25 +94,40 @@ test('CASE-07: a bash-prefixed .sh hook gets a wrapper', (sb) => {
   const plugin = sb.install('shScript', 'case07');
   sb.run('heal', 'claude');
   assertContains(join(plugin, 'hooks/hooks.json'), '_hooks/run-hook.cmd');
-  assertContains(join(plugin, '_hooks/check'), 'exec bash "$PLUGIN_ROOT/hooks/check.sh" "$@"');
+  const entry = hookMap(plugin).check;
+  assert(entry.exec === 'bash' && entry.target === 'hooks/check.sh',
+    'expected a bash descriptor for the script, got: ' + JSON.stringify(entry));
   healthy(sb, 'claude');
+});
+
+// The one fixture that is ever executed. Every other test proves the engine
+// decided correctly; this proves the decision runs, through the whole real
+// chain - cmd.exe, run-hook.cmd, run.mjs, bash, the plugin's own script - on
+// this machine's PATH. A descriptor no dispatcher can execute would pass
+// every assertion above it.
+test('CASE-07: a patched .sh hook runs end to end', (sb) => {
+  const plugin = sb.install('shScript', 'case07run');
+  sb.run('heal', 'claude');
+  const r = sb.exec(plugin, 'check');
+  assert(r.status === 0, 'the dispatched hook should succeed: ' + JSON.stringify(r));
+  assert(r.out === 'checked', 'and run the plugin\'s own script: ' + JSON.stringify(r));
 });
 
 test('CASE-09: a bare python3 hook is wrapped with a resolved interpreter', (sb) => {
   const plugin = sb.install('barePython', 'case09');
   sb.run('heal', 'claude');
-  const body = read(join(plugin, '_hooks/x'));
-  assert(body.includes('hooks/x.py'), 'wrapper should still target the script');
-  assert(!/^exec "\$PLUGIN_ROOT\/hooks\/x\.py"/m.test(body), 'must not exec the .py directly');
+  const entry = hookMap(plugin).x;
+  assert(entry.target === 'hooks/x.py', 'the descriptor should still target the script: ' + JSON.stringify(entry));
+  assert(/[\\/]/.test(entry.exec || ''), 'and name a probed absolute interpreter, not a bare one: ' + entry.exec);
   healthy(sb, 'claude');
 });
 
-test('CASE-21: with no working Python the wrapper degrades to a no-op', (sb) => {
+test('CASE-21: with no working Python the hook degrades to a no-op', (sb) => {
   const plugin = sb.install('barePython', 'case21');
   sb.runWithoutPython('heal', 'claude');
-  const body = read(join(plugin, '_hooks/x'));
-  assert(body.includes('exit 0'), 'expected a graceful no-op, got:\n' + body);
-  assertLacks(join(plugin, '_hooks/x'), 'hooks/x.py');
+  const entry = hookMap(plugin).x;
+  assert(entry.disabled, 'expected a disabled descriptor, got: ' + JSON.stringify(entry));
+  assert(!entry.target, 'and nothing left for run.mjs to start: ' + JSON.stringify(entry));
 });
 
 test('CASE-01: a BOM-corrupted hooks.json is sanitized before patching', (sb) => {
@@ -119,7 +135,7 @@ test('CASE-01: a BOM-corrupted hooks.json is sanitized before patching', (sb) =>
   addBom(join(plugin, 'hooks/hooks.json'));
   sb.run('heal', 'claude');
   assertLacks(join(plugin, 'hooks/hooks.json'), '\uFEFF');
-  assert(existsSync(join(plugin, '_hooks/check')), 'wrapper should still be created');
+  assert(hookMap(plugin).check, 'the hook should still have been patched');
   healthy(sb, 'claude');
 });
 
@@ -128,7 +144,7 @@ test('CASE-02: a CRLF hooks.json is normalized before patching', (sb) => {
   toCrlf(join(plugin, 'hooks/hooks.json'));
   sb.run('heal', 'claude');
   assertLacks(join(plugin, 'hooks/hooks.json'), '\r\n');
-  assert(existsSync(join(plugin, '_hooks/check')), 'wrapper should still be created');
+  assert(hookMap(plugin).check, 'the hook should still have been patched');
   healthy(sb, 'claude');
 });
 
@@ -144,7 +160,7 @@ test('CASE-05: the patched hooks.json is still valid JSON', (sb) => {
 test('CASE-19: generated paths never contain a doubled slash', (sb) => {
   const plugin = sb.install('shScript', 'case19');
   sb.run('heal', 'claude');
-  for (const file of ['hooks/hooks.json', '_hooks/check']) {
+  for (const file of ['hooks/hooks.json', '_hooks/hooks.map.json']) {
     assertLacks(join(plugin, file), '//');
     assertLacks(join(plugin, file), '\\\\');
   }
@@ -154,7 +170,7 @@ test('CASE-06: a v1 installed_plugins.json is enumerated too', (sb) => {
   const plugin = sb.install('shScript', 'case06');
   sb.downgradeRegistry();
   sb.run('heal', 'claude');
-  assert(existsSync(join(plugin, '_hooks/check')), 'a v1 registry should enumerate the same plugins');
+  assert(hookMap(plugin).check, 'a v1 registry should enumerate the same plugins');
 });
 
 test('CASE-12: only the registered install path is patched', (sb) => {
@@ -176,14 +192,15 @@ test('CASE-13: a plugin update that reverts hooks.json is re-patched', (sb) => {
   assert(read(hooks) === patched, 'the next run should restore the patch');
 });
 
-test('CASE-08: a missing-binary hook gets a dependency-checked wrapper', (sb) => {
+test('CASE-08: a missing-binary hook gets a dependency-checked descriptor', (sb) => {
   const plugin = sb.install('bareMissing', 'case08');
   sb.run('heal', 'claude');
-  const generated = readdirSync(join(plugin, '_hooks')).filter((f) => !DISPATCHER.includes(f));
-  assert(generated.length === 1, 'expected exactly one wrapper, got: ' + generated);
-  const wrapper = join(plugin, '_hooks', generated[0]);
-  assertContains(wrapper, 'command -v "wh-test-nonexistent-binary-xyz"');
-  assertContains(wrapper, 'exit 0');
+  const entries = Object.values(hookMap(plugin));
+  assert(entries.length === 1, 'expected exactly one entry, got: ' + JSON.stringify(entries));
+  assert(entries[0].requires === 'wh-test-nonexistent-binary-xyz',
+    'the dependency is re-checked at run time, not decided at patch time: ' + JSON.stringify(entries[0]));
+  assert(entries[0].command.includes('--check'),
+    'and the original command survives whole: ' + entries[0].command);
   healthy(sb, 'claude');
 });
 
@@ -223,30 +240,34 @@ test('CASE-15: verify reports what the scanner cannot see', (sb) => {
   assert(out.includes('recursive_wrapper'), 'verify is the pass that must catch it: ' + out);
 });
 
-test('CASE-16: a missing wrapper is rebuilt from hooks.json.bak', (sb) => {
+test('CASE-16: a missing hook entry is rebuilt from hooks.json.bak', (sb) => {
   const plugin = sb.install('wrapperMissing', 'case16');
-  assert(!existsSync(join(plugin, '_hooks/my-hook')), 'fixture should start without the wrapper');
+  assert(!existsSync(join(plugin, '_hooks/hooks.map.json')), 'fixture should start with no descriptor at all');
   sb.run('heal', 'claude');
-  assertContains(join(plugin, '_hooks/my-hook'), 'exec bash "$PLUGIN_ROOT/hooks/my-hook.sh" "$@"');
+  const entry = hookMap(plugin)['my-hook'];
+  assert(entry.exec === 'bash' && entry.target === 'hooks/my-hook.sh',
+    'expected the pre-patch command recovered: ' + JSON.stringify(entry));
   healthy(sb, 'claude');
 });
 
-test('CASE-22: a self-recursive wrapper is disabled to a no-op', (sb) => {
+test('CASE-22: a self-recursive script is neutralized to a no-op', (sb) => {
   const plugin = sb.install('recursiveWrapper', 'case22');
-  const wrapper = join(plugin, '_hooks/broken-hook.py');
-  assertContains(wrapper, 'python3 broken-hook.py');
+  const script = join(plugin, 'hooks/broken-hook.py');
+  assertContains(script, 'python3 broken-hook.py');
   sb.run('heal', 'claude');
-  assertLacks(wrapper, 'python3 broken-hook.py');
-  assertContains(wrapper, 'exit 0');
+  // Measured, not assumed: the obvious "#!/bin/bash\\nexit 0" is a SyntaxError
+  // under both interpreters the symptom names, so it left the hook broken.
+  assert(read(script) === '#!/bin/sh\n',
+    'expected the body that is a no-op under sh, python and node alike, got: ' + JSON.stringify(read(script)));
   healthy(sb, 'claude');
 });
 
-test('CASE-24: a wrapper execing the interpreter name is rebuilt from the backup', (sb) => {
+test('CASE-24: an entry naming the interpreter is rebuilt from the backup', (sb) => {
   const plugin = sb.install('brokenWrapper', 'case24');
-  const wrapper = join(plugin, '_hooks/session-start');
-  assertContains(wrapper, 'exec bash "$PLUGIN_ROOT/bash"');
+  assert(hookMap(plugin)['session-start'].target === 'bash', 'fixture should start pointing at the interpreter');
   sb.run('heal', 'claude');
-  assertContains(wrapper, 'exec bash "$PLUGIN_ROOT/hooks/session-start.sh" "$@"');
+  const entry = hookMap(plugin)['session-start'];
+  assert(entry.target === 'hooks/session-start.sh', 'expected the real script back: ' + JSON.stringify(entry));
   healthy(sb, 'claude');
 });
 
@@ -310,7 +331,7 @@ test('CASE-26: the hot path still heals a newly installed plugin', (sb) => {
   sb.run('heal', 'claude');
   const plugin = sb.install('wrapperMissing', 'second');
   sb.run('heal', 'claude', '--changed-only');
-  assert(existsSync(join(plugin, '_hooks/my-hook')), 'a plugin installed after the stamp should still be healed');
+  assert(hookMap(plugin)['my-hook'], 'a plugin installed after the stamp should still be healed');
 });
 
 // -- Dispatch ----------------------------------------------------------
@@ -346,22 +367,24 @@ const installCodexPython = (sb, name) => {
   return { plugin, hooks };
 };
 
-test('CASE-28: a Codex python3 hook gains commandWindows and a real wrapper', (sb) => {
+test('CASE-28: a Codex python3 hook gains commandWindows and a real descriptor', (sb) => {
   const { plugin, hooks } = installCodexPython(sb, 'codexdemo');
   sb.run('heal', 'codex');
   assertContains(hooks, '"commandWindows"');
   assertContains(hooks, '"command"');
-  assertLacks(join(plugin, '_codex_hooks/x'), 'exec "$PLUGIN_ROOT/hooks/x.py" "$@"');
+  const entry = hookMap(plugin, '_codex_hooks').x;
+  assert(entry.target === 'hooks/x.py' && /[\\/]/.test(entry.exec || ''),
+    'a Codex python hook gets the same probed interpreter as Claude: ' + JSON.stringify(entry));
   healthy(sb, 'codex');
 });
 
-test('CASE-28: a deleted Codex wrapper is rebuilt without a bare .py exec', (sb) => {
+test('CASE-28: a deleted Codex descriptor is rebuilt from the backup', (sb) => {
   const { plugin } = installCodexPython(sb, 'codexrebuild');
   sb.run('heal', 'codex');
-  rmSync(join(plugin, '_codex_hooks/x'));
+  rmSync(join(plugin, '_codex_hooks/hooks.map.json'));
   sb.run('heal', 'codex');
-  assert(existsSync(join(plugin, '_codex_hooks/x')), 'wrapper should be recreated');
-  assertLacks(join(plugin, '_codex_hooks/x'), 'exec "$PLUGIN_ROOT/hooks/x.py" "$@"');
+  const entry = hookMap(plugin, '_codex_hooks').x;
+  assert(entry.target === 'hooks/x.py', 'the entry should be recreated: ' + JSON.stringify(entry));
 });
 
 // Every commandWindows in a hooks file, read as data rather than matched as

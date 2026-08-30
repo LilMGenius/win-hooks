@@ -3,11 +3,11 @@
 // The issue types below are a closed vocabulary, shared verbatim with
 // skills/patch/SKILL.md. Adding one means updating both.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { hasBom, hasCrlf, readJson, readText, resolvePython, sanitize, writeText } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { brokenWrapperTarget, disabledBody, DISPATCHER_FILES, passthroughBody, relPath, wrapperBody, wrapperName } from './rules.mjs';
+import { brokenEntry, DISPATCHER_FILES, hookEntry, MAP_FILE, NEUTRALIZED_SCRIPT, readHookMap, relPath, wrapperName, writeHookMap } from './rules.mjs';
 
 const listFiles = (dir) => {
   try {
@@ -23,7 +23,7 @@ const readOrNull = (file) => {
   try { return readText(file); } catch { return null; }
 };
 
-// Recover the pre-patch command for a wrapper by replaying the naming rule over
+// Recover the pre-patch command for a hook by replaying the naming rule over
 // the backups. That is what lets a deleted wrapper be rebuilt exactly (CASE-16).
 function originalCommandFor(host, hooksFiles, wrapper) {
   for (const file of hooksFiles) {
@@ -70,43 +70,50 @@ function checkTree(host, install, report, repair) {
     repair(() => { sanitize(file); return 'normalized CRLF in ' + rel(file); });
   }
 
-  // ── Wrapper bodies ────────────────────────────────────────────────
+  // ── CASE-22: a script that runs an interpreter on its own filename ───
+  // It recurses until the hook times out. Only bash files qualify: the symptom
+  // is a plugin shipping a shell script under a .py or .js name.
   for (const file of dirFiles) {
-    const name = baseName(file);
-    if (DISPATCHER_FILES.includes(name)) continue;
     const body = readOrNull(file);
     if (body === null || !/^#!\/(bin\/bash|usr\/bin\/env bash)/.test(body)) continue;
-
-    // CASE-22: a bash wrapper that invokes an interpreter on its own filename
-    // recurses until the hook times out.
+    const name = baseName(file);
     const self = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp('(python3?|node)\\s+\\S*' + self).test(body)) {
-      report('recursive_wrapper', name + ' calls an interpreter on itself');
-      repair(() => {
-        writeText(file, disabledBody('bash wrapper called an interpreter on itself'));
-        return 'disabled recursive wrapper ' + name;
-      });
-      continue;
-    }
-
-    // CASE-24: the wrapper execs a target that cannot exist.
-    const broken = brokenWrapperTarget(body, install.path, existsSync);
-    if (!broken) continue;
-    report('wrapper_broken', rel(file) + ' execs an invalid target: ' + broken.rel);
+    if (!new RegExp('(python3?|node)\\s+\\S*' + self).test(body)) continue;
+    report('recursive_wrapper', name + ' calls an interpreter on itself');
     repair(() => {
+      writeText(file, NEUTRALIZED_SCRIPT);
+      return 'neutralized recursive script ' + rel(file);
+    });
+  }
+
+  // ── CASE-24: a hook descriptor whose target cannot run ──────────────
+  const map = readHookMap(wrapperDir);
+  for (const [name, entry] of Object.entries(map)) {
+    const broken = brokenEntry(entry, install.path, existsSync);
+    if (!broken) continue;
+    report('wrapper_broken', name + ' targets ' + broken.rel + ' (' + broken.kind + ')');
+    repair(() => {
+      // Rebuilt from the pre-patch command, and disabled outright when even
+      // that points at something no longer on disk - reporting the same broken
+      // entry every session is not a repair.
       const original = originalCommandFor(host, install.hooksFiles, name);
-      writeText(file, original ? wrapperBody(original, host.rootVar) : passthroughBody());
-      return 'repaired wrapper ' + rel(file);
+      const rebuilt = original ? hookEntry(original, host.rootVar) : null;
+      map[name] = rebuilt && !brokenEntry(rebuilt, install.path, existsSync)
+        ? rebuilt
+        : { disabled: broken.rel + ' is not on disk' };
+      writeHookMap(wrapperDir, map);
+      return 'repaired hook entry ' + name;
     });
   }
 }
 
-// Per-hooks.json checks: is it parseable, and does every wrapper it names exist?
+// Per-hooks.json checks: is it parseable, and does every hook it names exist?
 function checkHooksFile(host, install, plugin, report, repair) {
   const wrapperDir = join(install.path, host.wrapperDir);
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return report('json_invalid', error);
 
+  const map = readHookMap(wrapperDir);
   let needsRunHook = false;
   for (const { hook } of eachHook(data)) {
     // A python hook still running bare on a machine with no usable interpreter
@@ -122,18 +129,27 @@ function checkHooksFile(host, install, plugin, report, repair) {
     const rest = patched.replace(/^.*run-hook\.cmd"?\s*/i, '');
     const wrapper = (rest.match(/^"?([^"\s]+)/) || [])[1];
     if (!wrapper) { report('wrapper_missing', 'wrapper name is not parseable'); continue; }
-    if (existsSync(join(wrapperDir, wrapper))) continue;
+    if (map[wrapper]) continue;
 
-    report('wrapper_missing', host.wrapperDir + '/' + wrapper + ' not found');
+    report('wrapper_missing', MAP_FILE + ' has no entry for ' + wrapper);
     repair(() => {
       // An older patch form forwarded the real target as a trailing argument;
-      // run-hook.cmd passes it through, so a passthrough body is correct there.
+      // it was handed to bash, so that is the entry it becomes.
       const forwarded = relPath(rest, host.rootVar);
       const original = forwarded ? null : originalCommandFor(host, install.hooksFiles, wrapper);
       if (!forwarded && !original) return 'could not rebuild ' + wrapper + ' (no usable backup)';
       mkdirSync(wrapperDir, { recursive: true });
-      writeText(join(wrapperDir, wrapper), forwarded ? passthroughBody() : wrapperBody(original, host.rootVar));
-      return 'recreated missing wrapper ' + host.wrapperDir + '/' + wrapper;
+      const merged = readHookMap(wrapperDir);
+      merged[wrapper] = forwarded
+        ? { exec: 'bash', target: forwarded }
+        : hookEntry(original, host.rootVar);
+      writeHookMap(wrapperDir, merged);
+      // A pre-map wrapper file of the same name is now shadowed by the entry;
+      // dropping it keeps the fallback in run.mjs a migration bridge rather
+      // than a second supported layout.
+      const legacy = join(wrapperDir, wrapper);
+      if ((readOrNull(legacy) || '').startsWith('#!/bin/bash')) rmSync(legacy);
+      return 'added hook entry ' + wrapper;
     });
   }
 

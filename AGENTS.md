@@ -4,7 +4,7 @@
 
 **Automated self-healing, not one-off fixes.** When a Windows bug is reported, never fix it on the machine — pattern-match the error, encode the detection in `src/rules.mjs` or `src/verify.mjs`, and make the repair automatic. The fix has to reach every user's next session unattended.
 
-**Codex and Claude hook surfaces differ.** Claude repair rewrites the hook `command` in place; Codex repair preserves `command` and adds `commandWindows`, because Codex has a first-class Windows hook field and the portable command must keep working on macOS and Linux. That difference lives in `src/hosts.mjs` and nowhere else — scanning, wrapper generation, and verification are shared.
+**Codex and Claude hook surfaces differ.** Claude repair rewrites the hook `command` in place; Codex repair preserves `command` and adds `commandWindows`, because Codex has a first-class Windows hook field and the portable command must keep working on macOS and Linux. That difference lives in `src/hosts.mjs` and nowhere else — scanning, descriptor generation, and verification are shared.
 
 **A sentence a user reads lives in one place.** `package.json` holds the version, the one-liner (`description`), the paragraph an agent reads (`longDescription`), and the keywords; every manifest field and the README's bold line are copies that `scripts/sync-manifests.mjs` writes and CI rejects drift on. The one-liner is what a human skims in a plugin list, the paragraph is what a model reads to decide whether win-hooks applies. Claude's manifest has only `description`, so it gets the paragraph and its marketplace card carries the one-liner. A `description` labelling something *other* than the product — `hooks/*.json` naming their own hook — is not a copy and stays as it is.
 
@@ -51,10 +51,10 @@ One engine, one entry point. The plugin's own hooks, the CLI, and the skill all 
 ```
 bin/win-hooks.mjs    entry: [patch|heal|status] [claude|codex] [--changed-only] [--announce]
 src/heal.mjs         orchestration, state dir, heartbeat, changed-only guard
-src/patch.mjs        scan installed plugins, generate wrappers, rewrite hooks.json
+src/patch.mjs        scan installed plugins, write hook descriptors, rewrite hooks.json
 src/verify.mjs       post-patch health checks + auto-repair (issue-type vocabulary)
 src/settings.mjs     ~/.claude/settings.json hook-command rewrites
-src/rules.mjs        domain SSOT: what is incompatible, wrapper names, wrapper bodies
+src/rules.mjs        domain SSOT: what is incompatible, hook names, descriptor shapes
 src/hosts.mjs        Claude vs Codex descriptors + plugin enumeration
 src/env.mjs          functional interpreter probes, encoding-safe file IO
 hooks/run-hook.cmd   cmd.exe/bash polyglot entry point (BOM-free, CASE-01)
@@ -88,7 +88,7 @@ win-hooks runs inside every session it protects, so it fails to a no-op rather t
 
 ### Single sources of truth
 
-- **`src/rules.mjs`** — every decision about what is incompatible, what a wrapper is called, and what it contains.
+- **`src/rules.mjs`** — every decision about what is incompatible, what a patched hook is called, and what its descriptor says to run.
 - **`src/env.mjs`** — every interpreter probe and every read/write. Probes are **functional, never path heuristics**: an interpreter counts only if it actually runs (CASE-09).
 - **`src/hosts.mjs`** — every Claude-vs-Codex difference.
 
@@ -106,7 +106,9 @@ Extend those instead of re-deriving the same probe or regex in a fifth place.
 
 Three files, all Node: `test/fixtures.mjs` holds the synthetic broken plugins as data, `test/harness.mjs` the sandbox and assertions, `test/run.mjs` the tests. Unit tests exercise `src/rules.mjs` directly, since that is where the domain decisions live. End-to-end tests write a fixture into a sandbox with a private `$HOME` and drive the real pipeline, so a test run can never touch this repo's or this machine's real plugins.
 
-**Fixtures are data, not a checked-in tree.** A fixture is a `hooks.json` plus the files it names, and none is ever executed — a `.sh` or `.py` target only has to be *named* for the scanner to decide about it. As real files they would cost a second language in the test tree, a `.gitignore` per fixture to stop the root `*.bak` rule from swallowing the deliberate backups, and byte-identical copies of one plugin under three names. As strings they are one map, and BOM and CRLF become the same fixture with the corruption applied by the test.
+**Fixtures are data, not a checked-in tree.** A fixture is a `hooks.json` plus the files it names, and a scanner test never executes one — a `.sh` or `.py` target only has to be *named* for the scanner to decide about it. As real files they would cost a second language in the test tree, a `.gitignore` per fixture to stop the root `*.bak` rule from swallowing the deliberate backups, and byte-identical copies of one plugin under three names. As strings they are one map, and BOM and CRLF become the same fixture with the corruption applied by the test.
+
+**Exactly one fixture is executed**, by the CASE-07 end-to-end gate: heal a plugin whose hook is a `.sh` script, then run the emitted hook reference and assert on its exit status and stdout. Every other test reads the descriptor win-hooks wrote, which proves the patch is well-formed and not that it runs — the one failure mode the rest of the suite is blind to by construction.
 
 **The one unavoidable exception** is the fake `codex` on `PATH`, since enumeration shells out to `codex plugin list --json`. That `.cmd` is a one-line shim into node; all behaviour, including the call counter proving the `--changed-only` hot path enumerates nothing (CASE-26), lives in the `.mjs` beside it.
 
@@ -126,25 +128,25 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 
 ### CASE-07: `.sh` scripts called directly
 - **Symptom**: Hook fails — cmd.exe cannot execute `.sh` files.
-- **Fix**: `isIncompatible` flags any command containing `.sh`; `patchAll` writes an **extensionless** bash wrapper into `_hooks/` beside the `run-hook.cmd` polyglot and repoints the hook at it. The name must stay extensionless: Claude Code's Windows auto-detection prepends `bash` to anything containing `.sh`, which would double-dispatch.
+- **Fix**: `isIncompatible` flags any command containing `.sh`; `patchAll` records an **extensionless** hook name in `_hooks/hooks.map.json` and repoints the hook at the `run-hook.cmd` polyglot with that name as its argument. The name must stay extensionless: Claude Code's Windows auto-detection prepends `bash` to anything containing `.sh`, which would double-dispatch.
 
 ### CASE-08: Bare Unix commands not in PATH
 - **Symptom**: Hook fails — command not found (`semgrep`, `shellcheck`).
-- **Fix**: `isIncompatible` takes an injected `isInstalled` probe (`hasCommand` in production, a stub in tests) and flags a bare binary only when it genuinely is missing. The generated wrapper re-checks at run time and exits 0 quietly, so a missing optional dependency does not fail the hook on every invocation.
+- **Fix**: `isIncompatible` takes an injected `isInstalled` probe (`hasCommand` in production, a stub in tests) and flags a bare binary only when it genuinely is missing. The descriptor keeps the dependency as `{requires, command}`, and `hooks/run.mjs` re-checks it at run time and exits 0 quietly, so a missing optional dependency does not fail the hook on every invocation.
 
 ### CASE-09: `python3` not found / shadowed by Microsoft Store stub
 - **Symptom**: Plugins calling `python3` fail. Either `python3` is absent (Windows often ships only `python.exe`), or it resolves to the **Microsoft Store App Execution Alias stub** — a reparse point under `%LOCALAPPDATA%\Microsoft\WindowsApps\python3.exe` that satisfies `where` but, when run, only prints `Python was not found; run without arguments to install from the Microsoft Store...`.
 - **Root cause**: The bare name is not a reliable identity. `command -v python3` *succeeds* on the dead stub, and the cmd.exe that dispatches a hook may resolve a **different** interpreter than Git Bash does, so a command that works when tested by hand still fails in a session.
 - **Fix**: Always wrap, and bake in an absolute path.
-  - `isIncompatible` flags bare `python3`/`python` plugin-root commands **unconditionally** on Windows, so routing through the wrapper normalizes both dispatchers.
-  - `resolvePython` (`src/env.mjs`) picks the first of `python3`/`python`/`py` whose **absolute** path actually executes `-c ''`, and `wrapperBody` bakes that path in. The probe is **location-independent**: it accepts any real Python (Store, conda, python.org, embedded) and rejects only the dead alias, where a `*/WindowsApps/*` heuristic would wrongly disable a legitimate Store install. Resolution happens once at patch time, so hot hooks like `PreToolUse` never pay a second interpreter startup. No working Python at all ⇒ the wrapper is a graceful `exit 0` no-op.
-  - Only the user-writable plugin cache is written, so no admin rights are needed. An earlier best-effort `python.exe` → `python3.exe` copy was **removed**: it silently failed on non-writable system installs (`C:\ProgramData\miniconda3`, `C:\Program Files\...`) and produced an extensionless `python3` cmd.exe cannot execute. The wrapper was always the real fix.
+  - `isIncompatible` flags bare `python3`/`python` plugin-root commands **unconditionally** on Windows, so routing through the descriptor normalizes both dispatchers.
+  - `resolvePython` (`src/env.mjs`) picks the first of `python3`/`python`/`py` whose **absolute** path actually executes `-c ''`, and `hookEntry` bakes that path into the entry's `exec`. The probe is **location-independent**: it accepts any real Python (Store, conda, python.org, embedded) and rejects only the dead alias, where a `*/WindowsApps/*` heuristic would wrongly disable a legitimate Store install. Resolution happens once at patch time, so hot hooks like `PreToolUse` never pay a second interpreter startup. No working Python at all ⇒ the entry is `{disabled}`, which `run.mjs` honours as a silent exit 0.
+  - Only the user-writable plugin cache is written, so no admin rights are needed. An earlier best-effort `python.exe` → `python3.exe` copy was **removed**: it silently failed on non-writable system installs (`C:\ProgramData\miniconda3`, `C:\Program Files\...`) and produced an extensionless `python3` cmd.exe cannot execute. Dispatching through win-hooks was always the real fix.
   - `src/settings.mjs` drops a non-functional interpreter through the same probe (CASE-23). `verify` reports `python3_stub` only when an unwrapped hook uses python and **no** working interpreter exists at all.
 - **Issue type**: `python3_stub`
 
 ### CASE-10: Bare command extra_args redundancy
 - **Symptom**: Hook runs with duplicated arguments.
-- **Root cause**: The patcher re-appended the script path the wrapper body already bakes in.
+- **Root cause**: The patcher re-appended the script path the descriptor already carries.
 - **Fix**: `trailingArgs` returns only what follows the plugin-root path, and it is the sole source of preserved arguments.
 
 ---
@@ -152,9 +154,9 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 ## Encoding & Line Endings
 
 ### CASE-01: UTF-8 BOM in hook files
-- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (wrapper scripts) · `<<(을)를 지정된 경로를 찾지 못했습니다` / `<< was unexpected at this time` when a polyglot `.cmd` has a BOM — the BOM pushes `:` off line-start so cmd.exe stops treating it as a label, then parses `<<` (bash's heredoc opener) as redirection.
+- **Symptoms**: `JSON Parse error: Unrecognized token ''` (hooks.json) · `﻿:: command not found` (run-hook.cmd) · `﻿#!/bin/bash: No such file or directory` (a plugin's own bash script) · `<<(을)를 지정된 경로를 찾지 못했습니다` / `<< was unexpected at this time` when a polyglot `.cmd` has a BOM — the BOM pushes `:` off line-start so cmd.exe stops treating it as a label, then parses `<<` (bash's heredoc opener) as redirection.
 - **Root cause**: Windows editors and PowerShell `Out-File` insert a UTF-8 BOM (`EF BB BF`). JSON parsers, bash shebang parsing, and cmd.exe label detection all choke on the invisible bytes.
-- **Fix**: `src/env.mjs` makes this structural — every read strips a BOM, every write emits none. `patchAll` sanitizes `hooks.json` before parsing, and `verify --fix` strips BOMs from `hooks/`, the wrapper dir, **and any file referenced from hooks.json via a plugin-root path**, which catches polyglot wrappers shipped in nonstandard subdirs such as `scripts/`.
+- **Fix**: `src/env.mjs` makes this structural — every read strips a BOM, every write emits none. `patchAll` sanitizes `hooks.json` before parsing, and `verify --fix` strips BOMs from `hooks/`, the `_hooks/` dir, **and any file referenced from hooks.json via a plugin-root path**, which catches polyglot wrappers shipped in nonstandard subdirs such as `scripts/`.
 - **Issue type**: `bom`
 
 ### CASE-02: CRLF line endings in hooks.json
@@ -191,22 +193,22 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 
 ---
 
-## Runtime & Wrappers
+## Runtime & Dispatch
 
 ### CASE-22: Self-recursive wrapper scripts
 - **Symptom**: `python3: SyntaxError` or `node: SyntaxError` — the hook fails on every invocation.
 - **Root cause**: A plugin ships a bash script under a `.py`/`.js` name that runs the interpreter on **itself** (`pretooluse.py` is `#!/bin/bash` but calls `python3 pretooluse.py`). The original source was overwritten upstream.
-- **Fix**: `verify --fix` replaces the recursive wrapper with a graceful `exit 0`. A plugin update restores real functionality.
+- **Fix**: `verify --fix` overwrites the recursive script with a neutral no-op, and a plugin update restores real functionality. The no-op is a lone `#!/bin/sh` line, because the repair itself was measured to be broken: the old body — a bash shebang followed by `exit 0` — is a syntax error to the very python or node that is invoking the file, so a repaired hook kept failing with the message it was repaired for. `#!/bin/sh` and nothing else exits 0 under python, node, and bash alike, verified against all three.
 - **Issue type**: `recursive_wrapper`
 
 ### CASE-24: Wrapper execs a bogus interpreter path
 - **Symptom**: `bash: /c/Users/.../<plugin>/<ver>/bash: No such file or directory` on every invocation. Seen on hooks patched from interpreter-prefixed commands — learning-output-style, explanatory-output-style, ralph-loop, remember.
 - **Root cause**: For `bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-start.sh` the old patcher took the script path with `awk '{print $1}'`, which returns the **interpreter**, producing `exec bash "$PLUGIN_ROOT/bash"`. A second variant used the unbraced quoted form (`bash "$CLAUDE_PLUGIN_ROOT"/hooks/x.sh`); because the scanner emitted JSON-escaped text, the patcher failed to recognize it as a plugin-root path and wrote literal `\"$CLAUDE_PLUGIN_ROOT\"/...` bytes into the wrapper. Neither could be re-flagged afterwards, because the hook already pointed at `run-hook.cmd`.
-- **Fix**: `relPath` decodes JSON escapes first and accepts both the braced and unbraced forms, so fresh patches are correct by construction. `brokenWrapperTarget` additionally detects three bad shapes in an existing wrapper body — a bare interpreter name, a target that does not exist on disk, and a literal escaped-quote plugin-root — and `verify --fix` rewrites it from the pre-patch backup, healing existing installs without a reinstall.
+- **Fix**: `relPath` decodes JSON escapes first and accepts both the braced and unbraced forms, so fresh patches are correct by construction, and the escaped-quote variant cannot recur at all now that a patched hook is a JSON descriptor rather than generated shell text. `brokenEntry` detects the two bad shapes that outlive that change — an `exec` that is a bare interpreter name, and a target that is not on disk — and `verify --fix` re-derives the entry from the pre-patch backup, healing existing installs without a reinstall.
 - **Issue type**: `wrapper_broken`
 
 ### CASE-31: An emitted command must survive every shell its host may dispatch it through
-- **Symptom**: every patched Codex hook fails with exit 1 at SessionStart and UserPromptSubmit, leaving no heartbeat line and no output — the wrapper never runs.
+- **Symptom**: every patched Codex hook fails with exit 1 at SessionStart and UserPromptSubmit, leaving no heartbeat line and no output — the hook never runs.
 - **Root cause**: the class is *assuming which shell runs what you emit*. The instance: `commandWindows` was assumed to reach cmd.exe, so it was emitted as `"${PLUGIN_ROOT}\\_codex_hooks\\run-hook.cmd" <wrapper>`. Codex hands it to the session shell instead, and PowerShell parses a leading quoted string as an expression, then rejects the first argument: `Unexpected token '<wrapper>' in expression or statement`. The dispatcher is the host's choice, not ours, so there is nothing to fall back through — one emitted line has to be valid under all of them at once.
 - **Measured**: `"<path>" <arg>` exits 1 under Windows PowerShell 5.1 and pwsh 7 alike and 0 under cmd.exe; `cmd /c "<path>" <arg>` exits 0 under all three. The two PowerShell editions install side by side and parse this identically, so which one a user drives is not worth branching on — only whether *a* PowerShell is in the chain at all.
 - **Fix**: `src/rules.mjs` owns the rule as `isDispatchable(cmd, dispatchers)`, and `src/hosts.mjs` declares each host's `dispatchers` — `cmd` for Claude, `cmd` and `powershell` for Codex. Codex's `wrapperRef` prefixes `DISPATCH_PREFIX` (`cmd /c`), a command in both shells, which hands the quoted path to the cmd.exe that was wanted all along. Claude's stays unprefixed on purpose: its chain can include Git Bash, which would MSYS-mangle `/c` into `C:/`. The shipped `hooks/codex-hooks.json` carries the prefix too, since win-hooks never patches itself.
@@ -285,13 +287,13 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 
 ### CASE-15: Scanner returns empty but hooks are broken
 - **Symptom**: The incompatibility scan outputs nothing, yet plugins error on load.
-- **Root cause**: The scanner detects incompatible *commands*; it says nothing about encoding corruption or a wrapper that went missing after patching.
-- **Fix**: `verify` is a separate, post-patch pass covering JSON validity, BOM, CRLF, missing wrappers, broken wrapper bodies, recursive wrappers, and interpreter availability. Both passes run on every heal.
+- **Root cause**: The scanner detects incompatible *commands*; it says nothing about encoding corruption or a descriptor that went missing after patching.
+- **Fix**: `verify` is a separate, post-patch pass covering JSON validity, BOM, CRLF, missing descriptors, broken descriptor entries, recursive scripts, and interpreter availability. Both passes run on every heal.
 
-### CASE-16: Missing wrapper scripts or run-hook.cmd itself
-- **Symptom**: A patched hook references a `_hooks/` file that no longer exists — `bash: .../_hooks/<wrapper>: No such file or directory` — or silently never dispatches when `run-hook.cmd` itself is gone. Causes: interrupted patching, or external deletion.
+### CASE-16: A patched hook has no descriptor, or the dispatcher itself is gone
+- **Symptom**: A patched hook names something `_hooks/hooks.map.json` has no entry for, so the dispatcher refuses it — or the hook silently never runs when `run-hook.cmd` itself is missing. Causes: interrupted patching, or external deletion.
 - **Root cause**: Two gaps. The old check extracted the wrapper name with `grep -o '_hooks/run-hook.cmd[^"]*'`, which stopped at the escaped quote and lost the name, so the normal patched form reported a false "healthy". And the scanner skips already-patched hooks, so the advertised "just re-run patch" remedy could never fire.
-- **Fix**: `verify` parses the patched command properly and checks for both `run-hook.cmd` and the named wrapper in one pass, scoped to the wrapper dir so a plugin shipping its own `hooks/run-hook.cmd` is not falsely flagged. `verify --fix` **recreates** a missing wrapper: a passthrough body when the patched command forwards the real target as a trailing argument (the CASE-24 family), otherwise by replaying the wrapper-naming rule over `hooks.json.bak` to recover the original command and regenerate the body — routing back through `wrapperBody`, so a rebuilt Python wrapper gets a freshly probed interpreter (CASE-09). A missing `run-hook.cmd` is restored from the shipped template.
+- **Fix**: `verify` parses the patched command properly and checks for both dispatcher files and an entry under the named hook in one pass, scoped to the wrapper dir so a plugin shipping its own `hooks/run-hook.cmd` is not falsely flagged. `verify --fix` **recreates** a missing entry: a `bash` entry on the forwarded target when the patched command carries the real one as a trailing argument (the CASE-24 family), otherwise by replaying the naming rule over `hooks.json.bak` to recover the original command and re-deriving it through `hookEntry`, so a rebuilt Python entry gets a freshly probed interpreter (CASE-09). A wrapper *file* left under that name by a pre-descriptor install is deleted in the same repair, so the migration bridge in `run.mjs` never becomes a second supported layout. Either missing dispatcher file is restored from the shipped template.
 - **Note**: `verify` heals the *disk* only, so a running session stays broken under the CASE-13 mid-session caveat.
 - **Issue types**: `wrapper_missing` and `cmd_missing` — same detection pass, same root-cause family, both auto-repaired.
 
@@ -301,7 +303,7 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 - **Fix**: Failures surface on stderr and in the heartbeat. Suppression is scoped to exactly the places where a no-op is the *correct* outcome (a missing runtime, an unwritable log), never to real work.
 
 ### CASE-25: SessionStart self-heal silently times out / leaves no proof of run
-- **Symptom**: The auto-patch never seems to fire — a plugin that reverts to an incompatible form stays unpatched across sessions, with no `.bak` and no wrapper, yet running the repair by hand fixes it instantly. No error, and no way to tell whether the hook ran at all.
+- **Symptom**: The auto-patch never seems to fire — a plugin that reverts to an incompatible form stays unpatched across sessions, with no `.bak` and no descriptor, yet running the repair by hand fixes it instantly. No error, and no way to tell whether the hook ran at all.
 - **Root cause**: Two compounding gaps. (1) **Too slow.** The shell pipeline double-scanned every plugin and spawned `node`/`powershell` per plugin (~21-28s across ~18 plugins), crossing the SessionStart timeout under load — and a timeout-kill emits no error, so Claude Code killed the hook **silently**. (2) **No observability.** The happy path wrote nothing, so a healthy run, a timeout-kill, and "never dispatched" were indistinguishable.
 - **Fix**:
   - **Make it fast instead of making the timeout bigger.** The Node rewrite put a full repair run well under a second, ~100× under the flat `60` second timeout in `hooks/hooks.json`. An earlier version self-sized that timeout by rewriting its own `hooks.json`; that machinery is **deleted**. It compensated for fork cost rather than removing it, dirtied the working tree, forced `--changed-only` to special-case win-hooks' own plugin to avoid a self-trigger loop, and made the shipped default meaningless.

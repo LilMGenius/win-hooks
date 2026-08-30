@@ -2,9 +2,10 @@
 //
 // This file is copied verbatim into each patched plugin's wrapper directory, so
 // it must not import anything from src/: there is no src/ beside it there. The
-// bash resolution below is therefore deliberately a second copy of the doctrine
-// in src/env.mjs rather than a shared import - the alternative is shipping the
-// whole engine into every plugin that has one broken hook.
+// bash resolution and the descriptor shapes below are therefore deliberately a
+// second copy of what src/env.mjs and src/rules.mjs own, rather than a shared
+// import - the alternative is shipping the whole engine into every plugin that
+// has one broken hook.
 //
 // Usage: node run.mjs <hook-name> [args...]
 
@@ -56,18 +57,26 @@ const bashSees = (exe, target) => {
 
 // PATH is walked here rather than shelled out to `where.exe`, which would cost
 // a subprocess and would itself have to be found on the PATH under test.
-const pathBashes = () =>
+const pathDirs = () =>
   String(process.env.PATH || '')
     .split(';')
     .map((d) => d.trim().replace(/^"|"$/g, ''))
-    .filter(Boolean)
-    .map((d) => join(d, 'bash.exe'))
-    .filter((exe) => existsSync(exe));
+    .filter(Boolean);
 
 const resolveBash = (target) => {
   for (const exe of KNOWN_BASH) if (existsSync(exe)) return exe;
-  for (const exe of pathBashes()) if (bashSees(exe, target)) return exe;
+  for (const dir of pathDirs()) {
+    const exe = join(dir, 'bash.exe');
+    if (existsSync(exe) && bashSees(exe, target)) return exe;
+  }
   return null;
+};
+
+// Is this bare name executable from PATH? The same walk as resolveBash, but
+// across PATHEXT, since a dependency may be a .cmd or .bat shim, not an .exe.
+const onPath = (bin) => {
+  const exts = String(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  return pathDirs().some((d) => exts.some((ext) => existsSync(join(d, bin + ext))));
 };
 
 const readMap = () => {
@@ -80,18 +89,41 @@ const readMap = () => {
   }
 };
 
-// A wrapper file sitting in this directory is a pre-descriptor install that has
-// not been re-patched yet. Running it keeps those machines working until the
-// next heal replaces it with a map entry.
+// A bash wrapper file sitting in this directory is an install patched before
+// the map existed. Running it keeps that machine working until the next heal
+// replaces it with an entry - which verify does, so this is a bridge, not a
+// second supported layout.
 const legacyWrapper = join(HOOK_DIR, name);
 const entry = readMap()[name]
   || (existsSync(legacyWrapper) ? { exec: 'bash', absoluteTarget: legacyWrapper } : null);
 
 if (!entry) skip('no hook named "' + name + '" in ' + HOOK_DIR);
 
+// A hook win-hooks could not make runnable at patch time - no working Python,
+// say. Exiting 0 in silence is the point: it is a deliberate no-op, and a line
+// per invocation would be noise in every session until the plugin updates.
+if (entry.disabled) process.exit(0);
+
+// CASE-08: an optional dependency that simply is not installed here. Re-checked
+// every run rather than at patch time, so installing it later just starts
+// working, and its absence never fails the hook.
+if (entry.requires) {
+  if (!onPath(entry.requires)) process.exit(0);
+  // The command is run as written and the hook's own arguments are not
+  // appended: the entry already holds the whole original command line, so
+  // forwarding them too would duplicate every argument (CASE-10).
+  const dep = spawnSync(entry.command, { stdio: 'inherit', shell: true, windowsHide: true });
+  process.exit(dep.status === null ? 0 : dep.status);
+}
+
 const target = entry.absoluteTarget || join(PLUGIN_ROOT, entry.target);
 
+// exec is an absolute interpreter path baked in at patch time (CASE-09), the
+// literal "bash" when only a run-time search can find one, or absent when the
+// target is handed to the OS to run on its own.
 let exe = entry.exec;
+// "node" means the one already running: run-hook.cmd found it, and reusing it
+// keeps a hook on the same interpreter that dispatched it.
 if (exe === 'node') exe = process.execPath;
 else if (exe === 'bash') {
   exe = resolveBash(target);

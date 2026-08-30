@@ -1,10 +1,11 @@
 // The domain knowledge: which hook commands break on Windows, what to name the
-// wrapper that replaces them, and what that wrapper contains.
+// hook that replaces them, and what that hook's descriptor says.
 //
 // This is the one module worth reading to understand win-hooks; everything else
 // is plumbing. Each rule maps to a CASE in AGENTS.md.
 
-import { resolvePython } from './env.mjs';
+import { join } from 'node:path';
+import { readJson, resolvePython, writeJson } from './env.mjs';
 
 // Hook commands are stored JSON-escaped; recover the shell command as written.
 const decode = (cmd) => String(cmd || '').replace(/\\"/g, '"');
@@ -96,54 +97,56 @@ export function wrapperName(cmd, rootVar) {
   return name || 'hook-wrapper';
 }
 
-const PREAMBLE =
-  '#!/bin/bash\n' +
-  'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n' +
-  'PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\n';
+// Every patched hook is one JSON descriptor in this file, which run.mjs reads.
+// It replaced a directory of generated bash scripts, and the three shapes below
+// are the whole vocabulary - none of them is shell text:
+//
+//   { disabled: why }                win-hooks could not make this runnable
+//   { requires: bin, command: cmd }  run cmd, but only if bin is on PATH
+//   { exec?: interp, target: rel }   run target, under interp when one is named
+export const MAP_FILE = 'hooks.map.json';
 
-export const passthroughBody = () =>
-  '#!/bin/bash\n# win-hooks: exec the real target passed through by run-hook.cmd\nexec bash "$@"\n';
+export const readHookMap = (dir) => {
+  const { ok, data } = readJson(join(dir, MAP_FILE));
+  return ok && data && typeof data === 'object' ? data : {};
+};
 
-export const disabledBody = (why) =>
-  '#!/bin/bash\n# win-hooks: disabled - ' + why + '\nexit 0\n';
+export const writeHookMap = (dir, map) => writeJson(join(dir, MAP_FILE), map);
 
-// The wrapper body. Bash, because it has to exec .sh targets and inherits the
-// plugin-root convention every hook already relies on.
-export function wrapperBody(cmd, rootVar) {
+// The descriptor that replaces one incompatible command.
+export function hookEntry(cmd, rootVar) {
   const c = decode(cmd);
   const rel = relPath(c, rootVar);
   const h = head(c);
 
-  if (rel) {
-    if (/^python3?$/.test(h)) {
-      // Resolved once at patch time, not per invocation: hot hooks such as
-      // PreToolUse should not pay a second interpreter startup.
-      const py = resolvePython();
-      if (!py) return disabledBody('no working Python found at patch time');
-      return PREAMBLE + 'exec "' + py + '" "$PLUGIN_ROOT/' + rel + '" "$@"\n';
-    }
-    if (/\.sh$/.test(rel) || /^(bash|sh)$/.test(h)) {
-      return PREAMBLE + 'exec bash "$PLUGIN_ROOT/' + rel + '" "$@"\n';
-    }
-    return PREAMBLE + 'exec "$PLUGIN_ROOT/' + rel + '" "$@"\n';
-  }
+  // CASE-08: a bare dependency that is not installed here. The command is kept
+  // whole and re-checked at run time, so installing it later just starts
+  // working and its absence never fails the hook.
+  if (!rel) return { requires: h, command: c.trim() };
 
-  // CASE-08: stay silent when the dependency is genuinely absent, rather than
-  // failing the hook loudly on every single invocation.
-  return '#!/bin/bash\nif ! command -v "' + h + '" >/dev/null 2>&1; then\n  exit 0\nfi\n' + c.trim() + '\n';
+  if (/^python3?$/.test(h)) {
+    // Resolved once at patch time, not per invocation: hot hooks such as
+    // PreToolUse should not pay a second interpreter startup (CASE-09).
+    const py = resolvePython();
+    return py ? { exec: py, target: rel } : { disabled: 'no working Python found at patch time' };
+  }
+  if (/\.sh$/.test(rel) || /^(bash|sh)$/.test(h)) return { exec: 'bash', target: rel };
+  return { target: rel };
 }
 
-// A wrapper body is "broken" when it execs a target that cannot exist: the
-// interpreter name captured instead of the script (exec "$PLUGIN_ROOT/bash"),
-// or a path that is simply absent. Symptom: bash: .../bash: No such file.
-export function brokenWrapperTarget(body, installPath, existsAt) {
-  const escaped = body.match(/\\"\$(?:\{)?(?:CLAUDE_)?PLUGIN_ROOT(?:\})?\\"\/([A-Za-z0-9_./-]+)/);
-  if (escaped) return { kind: 'escaped-quotes', rel: escaped[1] };
-
-  const m = body.match(/exec (?:[^\s"]+ )?"\$PLUGIN_ROOT\/([^"]+)"/);
-  if (!m) return null;
-  const rel = m[1];
+// A descriptor is broken when its target cannot run: the interpreter name
+// captured instead of the script - the awk-era CASE-24 defect, still reachable
+// through a pre-map wrapper - or a target a plugin update took away.
+export function brokenEntry(entry, installPath, existsAt) {
+  const rel = entry && entry.target;
+  if (!rel) return null;
   if (/^(bash|sh|python3?|node|npx|npm)$/.test(rel)) return { kind: 'interpreter', rel };
   if (!existsAt(installPath + '/' + rel)) return { kind: 'missing-target', rel };
   return null;
 }
+
+// CASE-22: what a plugin script that runs an interpreter on itself is replaced
+// with. One line, and a no-op under sh, python, and node alike - measured. The
+// obvious "#!/bin/bash\nexit 0" is not it: that body is a SyntaxError under
+// both interpreters the symptom names, so it left the hook just as broken.
+export const NEUTRALIZED_SCRIPT = '#!/bin/sh\n';

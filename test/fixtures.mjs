@@ -18,7 +18,11 @@ const manifest = (event, command) =>
 
 const script = (body) => '#!/bin/bash\n' + body + '\n';
 
-// verify only checks that a wrapper directory has a run-hook.cmd, never what is
+// One patched hook is one entry in this file; the fixtures that start already
+// patched carry theirs the same way patch.mjs would have written it.
+const map = (entries) => JSON.stringify(entries, null, 2) + '\n';
+
+// verify only checks that a wrapper directory has its dispatcher, never what is
 // inside it, so the fixture copies say exactly that.
 const RUN_HOOK = ': placeholder - verify checks that this exists, never its contents\n';
 
@@ -54,22 +58,22 @@ export const FIXTURES = {
     'hooks/hooks.json': manifest('PreToolUse', 'bash ' + R + '/hooks/check.sh').replace(/}\n$/, ''),
   },
 
-  // CASE-22: a bash wrapper that runs an interpreter on its own filename.
+  // CASE-22: a plugin script that runs an interpreter on its own filename.
   recursiveWrapper: {
-    'hooks/hooks.json': manifest('Stop', '"' + R + '/_hooks/run-hook.cmd" broken-hook.py'),
-    '_hooks/broken-hook.py': script('python3 broken-hook.py'),
+    'hooks/hooks.json': manifest('Stop', '"' + R + '/_hooks/run-hook.cmd" broken-hook'),
+    'hooks/broken-hook.py': script('python3 broken-hook.py'),
+    '_hooks/hooks.map.json': map({
+      'broken-hook': { exec: 'C:/Python313/python.exe', target: 'hooks/broken-hook.py' },
+    }),
     '_hooks/run-hook.cmd': RUN_HOOK,
   },
 
-  // CASE-24: a wrapper that execs the interpreter name instead of the script.
+  // CASE-24: an entry whose target is the interpreter name, not the script.
   brokenWrapper: {
     'hooks/hooks.json': manifest('SessionStart', '"' + R + '/_hooks/run-hook.cmd" session-start'),
     'hooks/hooks.json.bak': manifest('SessionStart', 'bash ' + R + '/hooks/session-start.sh'),
     'hooks/session-start.sh': script('echo "session-start ran"'),
-    '_hooks/session-start': script(
-      'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"\n'
-      + 'PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"\n'
-      + 'exec bash "$PLUGIN_ROOT/bash" "$@"'),
+    '_hooks/hooks.map.json': map({ 'session-start': { exec: 'bash', target: 'bash' } }),
     '_hooks/run-hook.cmd': RUN_HOOK,
   },
 };

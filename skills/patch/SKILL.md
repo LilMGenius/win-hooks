@@ -24,17 +24,17 @@ CASE-NN.
 
 | Symptom | Cause | CASE |
 |---|---|---|
-| `JSON Parse error: Unrecognized token ''` · `﻿:: command not found` · `﻿#!/bin/bash: No such file or directory` · `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ...`) | UTF-8 BOM in a hooks.json, wrapper, or polyglot `.cmd` | CASE-01 |
+| `JSON Parse error: Unrecognized token ''` · `﻿:: command not found` · `﻿#!/bin/bash: No such file or directory` · `<<(을)를 지정된 경로를 찾지 못했습니다` (mojibake `<<��(��) ...`) | UTF-8 BOM in a hooks.json, a hook script, or the polyglot `.cmd` | CASE-01 |
 | `Hook load failed: JSON Parse error` | BOM, CRLF, or otherwise invalid hooks.json | CASE-01/02/05 |
-| `SyntaxError` from python3/node on a `.py`/`.js` hook file | a bash wrapper named `.py`/`.js` calling the interpreter on itself | CASE-22 |
+| `SyntaxError` from python3/node on a `.py`/`.js` hook file | a bash script named `.py`/`.js` calling the interpreter on itself | CASE-22 |
 | `No such file or directory` for a hook command | a `.sh` script or bare command cmd.exe cannot run | CASE-07/08 |
 | `MODULE_NOT_FOUND` in a Node hook | a backslash `C:\...` path mangled in settings.json | CASE-20 |
 | `'node' is not recognized...` / `'node'은(는) 내부 또는 외부 명령...` (mojibake `'node'��...`) | a bare interpreter in settings.json not on cmd.exe's PATH | CASE-23 |
-| `bash: .../<interpreter>: No such file or directory` | a generated wrapper execs a bogus `$PLUGIN_ROOT/<interpreter>` target | CASE-24 |
+| `bash: .../<interpreter>: No such file or directory` | a hook entry whose target is the interpreter name instead of the script | CASE-24 |
 | `Python was not found; run without arguments to install from the Microsoft Store` | bare `python3` resolving to the Store alias stub | CASE-09 |
 
 The two CP949-garbled errors look alike but are not: `<<(을)를 지정된 경로...` is a
-BOM-corrupted polyglot wrapper (CASE-01), `'node'...내부 또는 외부 명령` is a bare
+BOM-corrupted polyglot `.cmd` (CASE-01), `'node'...내부 또는 외부 명령` is a bare
 interpreter in settings.json (CASE-23).
 
 ## Run it
@@ -66,10 +66,10 @@ there is nothing left to do. The line prefixes are a closed vocabulary:
 | `bom` | A UTF-8 BOM in a hook file (breaks JSON, shebangs, and cmd.exe) |
 | `json_crlf` | CRLF line endings in hooks.json |
 | `json_invalid` | hooks.json is not parseable |
-| `wrapper_missing` | A patched hook points at a wrapper that no longer exists |
-| `wrapper_broken` | A wrapper execs a target that cannot exist |
-| `cmd_missing` | run-hook.cmd is gone from the wrapper directory |
-| `recursive_wrapper` | A wrapper calls an interpreter on itself and loops |
+| `wrapper_missing` | A patched hook has no entry in the hook map |
+| `wrapper_broken` | A hook entry names a target that cannot run |
+| `cmd_missing` | The dispatcher is gone from the hook directory |
+| `recursive_wrapper` | A hook script calls an interpreter on itself and loops |
 | `python3_stub` | A python hook with no working interpreter installed |
 | `backslash_path` | A settings.json hook command with Windows backslash paths |
 | `bare_command` | A settings.json hook command cmd.exe cannot resolve |
@@ -96,7 +96,8 @@ running session has already cached its hook config - tell the user to run
 
 - **Still failing after a repair:** confirm Git Bash at
   `C:\Program Files\Git\bin\bash.exe` (or set `WH_BASH_EXE` for a non-standard
-  install), inspect the generated wrapper, and run `claude --debug hooks`.
+  install), read the plugin's `_hooks/hooks.map.json`, and run
+  `claude --debug hooks`.
 - **Only the Microsoft Store python3 stub is installed:** install a real Python
   from [python.org](https://www.python.org/) and restart.
 - **A plugin update reverted a repair:** expected. win-hooks re-patches on the
