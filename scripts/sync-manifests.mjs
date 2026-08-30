@@ -1,11 +1,10 @@
-#!/usr/bin/env node
-// win-hooks: scripts/sync-manifests
+// win-hooks: scripts/sync-manifests.mjs
 // package.json owns everything the manifests repeat: the version, the product
 // one-liner, the paragraph an agent reads, and the keyword set. No host derives
 // them, so this writes the copies and CI checks that none of them drifted.
 //
-//   node scripts/sync-manifests           write package.json's values into the copies
-//   node scripts/sync-manifests --check   exit 1 if any copy disagrees (used by CI)
+//   node scripts/sync-manifests.mjs           write package.json's values into the copies
+//   node scripts/sync-manifests.mjs --check   exit 1 if any copy disagrees (used by CI)
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

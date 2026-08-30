@@ -6,7 +6,7 @@
 
 **Codex and Claude hook surfaces differ.** Claude repair rewrites the hook `command` in place; Codex repair preserves `command` and adds `commandWindows`, because Codex has a first-class Windows hook field and the portable command must keep working on macOS and Linux. That difference lives in `src/hosts.mjs` and nowhere else — scanning, wrapper generation, and verification are shared.
 
-**A sentence a user reads lives in one place.** `package.json` holds the version, the one-liner (`description`), the paragraph an agent reads (`longDescription`), and the keywords; every manifest field and the README's bold line are copies that `scripts/sync-manifests` writes and CI rejects drift on. The one-liner is what a human skims in a plugin list, the paragraph is what a model reads to decide whether win-hooks applies. Claude's manifest has only `description`, so it gets the paragraph and its marketplace card carries the one-liner. A `description` labelling something *other* than the product — `hooks/*.json` naming their own hook — is not a copy and stays as it is.
+**A sentence a user reads lives in one place.** `package.json` holds the version, the one-liner (`description`), the paragraph an agent reads (`longDescription`), and the keywords; every manifest field and the README's bold line are copies that `scripts/sync-manifests.mjs` writes and CI rejects drift on. The one-liner is what a human skims in a plugin list, the paragraph is what a model reads to decide whether win-hooks applies. Claude's manifest has only `description`, so it gets the paragraph and its marketplace card carries the one-liner. A `description` labelling something *other* than the product — `hooks/*.json` naming their own hook — is not a copy and stays as it is.
 
 **One root cause = one issue type.** Extend an existing check for a variant instead of adding a new one; fold an overlapping new CASE into the existing one, and merge a single-CASE section into a neighbor. **CASE-NN are stable discovery-order IDs** — append at the next free number and never renumber, because SKILL.md and git reference them.
 
@@ -18,7 +18,7 @@
 4. **src/verify.mjs** — new issue type → add the check.
 5. **test/run.mjs** — new CASE → a fixture in `test/fixtures.mjs` and a test, in the same commit.
 6. **Cross-check** — the issue-type vocabulary matches between `src/verify.mjs` and SKILL.md.
-7. **Version, descriptions, keywords** — `package.json` is the SSOT for all of them; run `node scripts/sync-manifests`, then tag `vX.Y.Z`. New detection or repair capability is `feat:` (minor); fixing existing detection, docs, and refactors are patch.
+7. **Version, descriptions, keywords** — `package.json` is the SSOT for all of them; run `node scripts/sync-manifests.mjs`, then tag `vX.Y.Z`. New detection or repair capability is `feat:` (minor); fixing existing detection, docs, and refactors are patch.
 
 ### Commits and releases
 
