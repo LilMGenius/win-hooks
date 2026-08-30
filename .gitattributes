@@ -1,5 +1,6 @@
-# Everything ships with LF. Git Bash executes the wrapper scripts win-hooks
-# generates, and CRLF breaks a shebang line (CASE-02/03).
+# Everything ships with LF. A plugin's own hook scripts are executed by bash,
+# where CRLF breaks the shebang line, and this repo must never hand one back
+# with the wrong endings (CASE-02/03).
 * text=auto eol=lf
 
 # run-hook.cmd is a cmd.exe/bash polyglot; cmd.exe must not see a BOM or CRLF.
