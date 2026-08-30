@@ -9,6 +9,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { MAP_FILE } from '../src/rules.mjs';
 
 const R = '${CLAUDE_PLUGIN_ROOT}';
 
@@ -62,7 +63,7 @@ export const FIXTURES = {
   recursiveWrapper: {
     'hooks/hooks.json': manifest('Stop', '"' + R + '/_hooks/run-hook.cmd" broken-hook'),
     'hooks/broken-hook.py': script('python3 broken-hook.py'),
-    '_hooks/hooks.map.json': map({
+    ['_hooks/' + MAP_FILE]: map({
       'broken-hook': { exec: 'C:/Python313/python.exe', target: 'hooks/broken-hook.py' },
     }),
     '_hooks/run-hook.cmd': RUN_HOOK,
@@ -73,7 +74,7 @@ export const FIXTURES = {
     'hooks/hooks.json': manifest('SessionStart', '"' + R + '/_hooks/run-hook.cmd" session-start'),
     'hooks/hooks.json.bak': manifest('SessionStart', 'bash ' + R + '/hooks/session-start.sh'),
     'hooks/session-start.sh': script('echo "session-start ran"'),
-    '_hooks/hooks.map.json': map({ 'session-start': { exec: 'bash', target: 'bash' } }),
+    ['_hooks/' + MAP_FILE]: map({ 'session-start': { exec: 'bash', target: 'bash' } }),
     '_hooks/run-hook.cmd': RUN_HOOK,
   },
 };

@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { materialize } from './fixtures.mjs';
+import { MAP_FILE } from '../src/rules.mjs';
 
 export const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 const CLI = join(REPO, 'bin/win-hooks.mjs');
@@ -81,7 +82,7 @@ export const assertLacks = (file, text) =>
 
 // The descriptor file a patched plugin carries: one entry per patched hook.
 export const hookMap = (pluginRoot, dir = '_hooks') =>
-  JSON.parse(read(join(pluginRoot, dir, 'hooks.map.json')));
+  JSON.parse(read(join(pluginRoot, dir, MAP_FILE)));
 
 // -- Dispatchers -------------------------------------------------------
 
@@ -250,7 +251,7 @@ function makeSandbox() {
       const noGit = (text) => text.replace(/C:\/Program Files[^']*?bash\.exe/g, 'X:/no-git/bash.exe');
       writeFileSync(join(hookDir, 'run-hook.cmd'), read(join(REPO, 'hooks/run-hook.cmd')));
       writeFileSync(join(hookDir, 'run.mjs'), noGit(read(join(REPO, 'hooks/run.mjs'))));
-      writeFileSync(join(hookDir, 'hooks.map.json'),
+      writeFileSync(join(hookDir, MAP_FILE),
         JSON.stringify({ [hook]: { exec: 'bash', target: 'hooks/' + hook } }));
       writeFileSync(join(pluginRoot, 'hooks', hook), body);
       return runHook(hookDir, hook, path);

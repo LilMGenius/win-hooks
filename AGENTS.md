@@ -94,6 +94,8 @@ win-hooks runs inside every session it protects, so it fails to a no-op rather t
 
 Extend those instead of re-deriving the same probe or regex in a fifth place.
 
+`hooks/run.mjs` is the one file allowed to hold a second copy, because it ships alone into foreign plugins and has no `src/` beside it. The copy is kept honest rather than tolerated: a test asserts the descriptor filename it reads is the one `src/rules.mjs` exports, so drift fails the suite instead of the user's session.
+
 ### State directory
 
 `~/.claude/win-hooks/` (`~/.codex/win-hooks/` for Codex) holds four files: `root` (this install's path, so the command and skill can locate win-hooks — CASE-11), `stamp` (the mtime baseline for `--changed-only`), `seen.json` (the paths that baseline covers — CASE-26), and `last-run.log` (the heartbeat).

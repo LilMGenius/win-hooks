@@ -12,7 +12,7 @@ import {
   addBom, assert, assertContains, assertLacks, dispatchThrough, hookMap, read, REPO, summarize, test,
   toCrlf,
 } from './harness.mjs';
-import { isDispatchable, isIncompatible, trailingArgs, hookName } from '../src/rules.mjs';
+import { isDispatchable, isIncompatible, MAP_FILE, trailingArgs, hookName } from '../src/rules.mjs';
 import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
@@ -72,6 +72,13 @@ test('the shipped hook manifests declare timeouts in seconds', () => {
       assert(Number(value) <= 600, name + ' timeout ' + value + ' is not seconds');
     }
   }
+});
+
+// hooks/run.mjs ships alone into foreign plugins, so it cannot import the
+// name of the descriptor file it reads. That copy is deliberate; this is what
+// stops it drifting from the module that owns the name.
+test('the shipped dispatcher reads the descriptor file src/rules.mjs names', () => {
+  assertContains(join(REPO, 'hooks/run.mjs'), "join(HOOK_DIR, '" + MAP_FILE + "'");
 });
 
 test('CASE-03: the repo pins LF, and the files bash executes carry no CRLF', () => {
@@ -160,7 +167,7 @@ test('CASE-05: the patched hooks.json is still valid JSON', (sb) => {
 test('CASE-19: generated paths never contain a doubled slash', (sb) => {
   const plugin = sb.install('shScript', 'case19');
   sb.run('heal', 'claude');
-  for (const file of ['hooks/hooks.json', '_hooks/hooks.map.json']) {
+  for (const file of ['hooks/hooks.json', join('_hooks', MAP_FILE)]) {
     assertLacks(join(plugin, file), '//');
     assertLacks(join(plugin, file), '\\\\');
   }
@@ -242,7 +249,7 @@ test('CASE-15: verify reports what the scanner cannot see', (sb) => {
 
 test('CASE-16: a missing hook entry is rebuilt from hooks.json.bak', (sb) => {
   const plugin = sb.install('entryMissing', 'case16');
-  assert(!existsSync(join(plugin, '_hooks/hooks.map.json')), 'fixture should start with no descriptor at all');
+  assert(!existsSync(join(plugin, '_hooks', MAP_FILE)), 'fixture should start with no descriptor at all');
   sb.run('heal', 'claude');
   const entry = hookMap(plugin)['my-hook'];
   assert(entry.exec === 'bash' && entry.target === 'hooks/my-hook.sh',
@@ -381,7 +388,7 @@ test('CASE-28: a Codex python3 hook gains commandWindows and a real descriptor',
 test('CASE-28: a deleted Codex descriptor is rebuilt from the backup', (sb) => {
   const { plugin } = installCodexPython(sb, 'codexrebuild');
   sb.run('heal', 'codex');
-  rmSync(join(plugin, '_codex_hooks/hooks.map.json'));
+  rmSync(join(plugin, '_codex_hooks', MAP_FILE));
   sb.run('heal', 'codex');
   const entry = hookMap(plugin, '_codex_hooks').x;
   assert(entry.target === 'hooks/x.py', 'the entry should be recreated: ' + JSON.stringify(entry));
