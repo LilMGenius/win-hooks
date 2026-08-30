@@ -57,8 +57,9 @@ src/settings.mjs     ~/.claude/settings.json hook-command rewrites
 src/rules.mjs        domain SSOT: what is incompatible, wrapper names, wrapper bodies
 src/hosts.mjs        Claude vs Codex descriptors + plugin enumeration
 src/env.mjs          functional interpreter probes, encoding-safe file IO
-hooks/win-hooks      bash bridge into bin/win-hooks.mjs
-hooks/run-hook.cmd   cmd.exe/bash polyglot dispatcher (BOM-free, CASE-01)
+hooks/run-hook.cmd   cmd.exe/bash polyglot entry point (BOM-free, CASE-01)
+hooks/run.mjs        dispatcher: resolves a hook name and runs it (CASE-29)
+hooks/hooks.map.json what each hook name runs
 ```
 
 `heal` is the silent hook-driven repair, `status` the read-only report, and `patch` the one a person runs: report, then repair only if unhealthy (CASE-30).
@@ -67,7 +68,7 @@ hooks/run-hook.cmd   cmd.exe/bash polyglot dispatcher (BOM-free, CASE-01)
 
 **Why Node, not bash.** win-hooks is a JSON transformation program that was first written in a language that cannot parse JSON. Text-matching hook commands with awk and sed caused CASE-05, CASE-16, CASE-19, and CASE-24 — four bugs that cannot exist against a parsed object. It was also structurally slow: a 17s profile was ~300 coreutils forks at 32-36ms each plus 76ms per `node` spawn, so fork cost *was* the runtime and no shell tuning would have helped. Node is already a hard dependency of Claude Code, so it costs the user nothing. Measured: a full repair run went **21s → 0.35s**, the suite ~38s → ~4s.
 
-**Language boundaries.** Everything is Node except where the OS makes it impossible. `hooks/win-hooks` and every generated wrapper body are bash, because they exec `.sh` targets under Git Bash. `hooks/run-hook.cmd` is a cmd/bash polyglot, because cmd.exe dispatches hooks on Windows. The tests add one more: a one-line `.cmd` shim so cmd.exe's `PATH` search can find the fake `codex`. Do not introduce a third language and do not let a boundary widen — a shim stays a shim, with the behaviour in the `.mjs` beside it.
+**Language boundaries.** Two languages, and the second one is three lines wide. Everything is Node; `hooks/run-hook.cmd` is the one exception, a cmd/bash polyglot, because cmd.exe is what dispatches a hook on Windows and cmd.exe cannot be handed a `.mjs`. Both of its halves do the same small thing — start node on `hooks/run.mjs` — so no decision lives in either. The tests add a one-line `.cmd` shim so cmd.exe's `PATH` search can find the fake `codex`. Do not introduce a third language, and do not let this boundary widen: anything a shim is tempted to decide belongs in the `.mjs` it starts.
 
 ---
 
@@ -77,8 +78,8 @@ hooks/run-hook.cmd   cmd.exe/bash polyglot dispatcher (BOM-free, CASE-01)
 
 win-hooks runs inside every session it protects, so it fails to a no-op rather than to an error.
 
-1. **Fail-safe to no-op.** `hooks/win-hooks` exits 0 when `node` is absent; `bin/win-hooks.mjs` exits 0 off-Windows; every per-plugin repair is wrapped so one unreadable plugin never aborts the run; interpreter probes return `null` instead of throwing.
-   - **Exception:** a missing *shipped* file (`hooks/run-hook.cmd`, an `src/` module) is an installation defect, not an environmental one, and fails loud — a broken install must be visible rather than silently idle.
+1. **Fail-safe to no-op.** `hooks/run-hook.cmd` exits 0 when `node` is absent, and `hooks/run.mjs` exits 0 when the hook name, its target, or a usable bash is missing — each after one stderr line, because a silent no-op is the failure win-hooks exists to catch; `bin/win-hooks.mjs` exits 0 off-Windows; every per-plugin repair is wrapped so one unreadable plugin never aborts the run; interpreter probes return `null` instead of throwing.
+   - **Exception:** a missing *shipped* file (`hooks/run-hook.cmd`, `hooks/run.mjs`, an `src/` module) is an installation defect, not an environmental one, and fails loud — a broken install must be visible rather than silently idle.
 2. **Do work once.** Interpreter probes are memoized per process. Directory-level checks run once per install tree, not once per `hooks.json` — Codex declares one hooks file per event, so the two differ. The `UserPromptSubmit` hot path (`--changed-only`) stats a cached watch list and returns without enumerating anything (CASE-26).
 3. **Bounded work.** One pass per plugin, no unbounded loops, a timeout on every subprocess.
 4. **Stay quiet, except where silence is itself the bug.** A `UserPromptSubmit` hook's stdout is injected into the model's context, so progress goes to stderr and proof-of-run to disk (CASE-25). Three surfaces speak on purpose: `status` and `patch`, because a person asked for the report, and `heal --announce` at SessionStart, because a hook nobody can see is indistinguishable from one that never fired (CASE-32).
@@ -165,7 +166,7 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 ### CASE-03: CRLF in bash scripts breaks execution
 - **Symptom**: `bash: ./script: /bin/bash^M: bad interpreter`
 - **Root cause**: `core.autocrlf=true` converts LF→CRLF on checkout.
-- **Fix**: `.gitattributes` pins `* text=auto eol=lf`, with explicit entries for the two files that must never be touched (`hooks/run-hook.cmd`, `hooks/win-hooks`).
+- **Fix**: `.gitattributes` pins `* text=auto eol=lf`, with an explicit entry for the one file that must never be touched (`hooks/run-hook.cmd`).
 
 ---
 
@@ -213,17 +214,17 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 - **Migration**: `sourceCommand` treats a `commandWindows` that names `_codex_hooks/run-hook.cmd` without the prefix as unpatched, so the next heal re-derives it. A `commandWindows` a plugin author wrote is still left alone.
 - **Rejected**: emitting an 8.3 short path to drop the quotes — it works, but only where 8.3 name generation is still enabled on the volume, and it dies on a plugin root containing spaces in a directory with no short name.
 
-### CASE-27: run-hook.cmd had no override for a non-standard Git install
+### CASE-27: the dispatcher had no override for a non-standard install, and never refreshed
 - **Symptom**: none reported — found by a deliberate comparison study against oh-my-openagent's `node-dispatch.ps1` shim.
-- **Root cause**: `run-hook.cmd` only checked two hardcoded `Program Files` paths plus `where bash`, with no way to point at a portable/scoop/winget Git install. Separately, the template was copied into `_hooks/` only the *first* time a plugin was patched, so a template fix never reached an already-patched plugin.
-- **Fix**: `run-hook.cmd` honours an optional `WH_BASH_EXE`, used only when set **and** the path exists, so default behavior is unchanged; verified against cmd.exe. `patchAll` re-copies the template on every setup pass.
-- **Known gap**: a plugin that is already fully compatible never re-enters setup, so its `run-hook.cmd` stays at whatever version patched it. Closing that needs a `verify` staleness check against the template — not added; an opt-in env var does not yet justify a new issue type.
-- **Known limit**: argument forwarding is `%2 %3 ... %9`, capped at 8 extra args. Replacing it with `shift` + `%*` does not work — cmd.exe's `%*` ignores `shift` and always yields the original list (verified). Left as a narrow limitation with no observed occurrence.
+- **Root cause**: the dispatcher only checked hardcoded `Program Files` paths, with no way to point at a portable/scoop/winget install. Separately, the template was copied into `_hooks/` only the *first* time a plugin was patched, so a template fix never reached an already-patched plugin.
+- **Fix**: an override is honoured at each layer, used only when set **and** the path exists, so default behavior is unchanged — `WH_NODE_EXE` in `run-hook.cmd` for node, `WH_BASH_EXE` in `run.mjs` for bash. `patchAll` re-copies **every** file in `DISPATCHER_FILES` on every setup pass, so the two halves can never be refreshed apart.
+- **Known gap**: a plugin that is already fully compatible never re-enters setup, so its dispatcher stays at whatever version patched it. Closing that needs a `verify` staleness check against the template — not added; an opt-in env var does not yet justify a new issue type.
+- **Resolved limit**: argument forwarding used to be `%2 %3 ... %9`, capped at 8 extra args, because cmd.exe's `%*` ignores `shift` and the hook name had to be consumed before forwarding. The name is read by `run.mjs` now, so nothing shifts, `%*` forwards the whole line, and the cap is gone.
 
 ### CASE-29: PATH `bash` is WSL, which swallows every hook and reports success
 - **Symptom**: none visible — that is the entire problem. On a machine with WSL but no Git for Windows, every patched hook would appear to run and do nothing, forever.
-- **Root cause**: `run-hook.cmd`'s last resort is whatever `bash.exe` is on `PATH`. On stock Windows that is `%SystemRoot%\System32\bash.exe`, the WSL launcher: it cannot open a Windows path (`C:\x\y` reaches the guest as `C:xy`) **and it exits 0 on that failure**, so cmd.exe sees success.
-- **Fix**: the PATH candidate must prove it can see the script it is about to run — `bash -c 'test -f "$WH_PROBE"'` — matching the CASE-09 doctrine that an interpreter counts only if it actually runs. The override and the two Git for Windows paths are known-good and skip the probe, so the common path stays subprocess-free. A failing candidate prints one stderr line and exits 0: still fail-safe, no longer silent.
+- **Root cause**: the last resort for bash is whatever `bash.exe` is on `PATH`. On stock Windows that is `%SystemRoot%\System32\bash.exe`, the WSL launcher: it cannot open a Windows path (`C:\x\y` reaches the guest as `C:xy`) **and it exits 0 on that failure**, so the dispatcher sees success.
+- **Fix**: the PATH candidate must prove it can see the script it is about to run — `bash -c 'test -f "$WH_PROBE"'` — matching the CASE-09 doctrine that an interpreter counts only if it actually runs. The override and the two Git for Windows paths are known-good and skip the probe, so the common path stays subprocess-free. A failing candidate prints one stderr line and exits 0: still fail-safe, no longer silent. This lives in `hooks/run.mjs`, where PATH is walked as ordinary code rather than shelled out to `where`.
 - **Detail**: the probe path travels through the environment, not as `$0`. Passing it as `$0` makes WSL's launcher report `$0` as `/bin/bash`, so `test -f` passes and the probe accepts the very interpreter it exists to reject.
 - **Rejected**: blacklisting `System32\bash.exe` and `WindowsApps\bash.exe` by path — cheaper, but a path heuristic, and it would still accept a broken bash anywhere else.
 

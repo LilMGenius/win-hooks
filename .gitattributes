@@ -4,4 +4,3 @@
 
 # run-hook.cmd is a cmd.exe/bash polyglot; cmd.exe must not see a BOM or CRLF.
 hooks/run-hook.cmd text eol=lf
-hooks/win-hooks text eol=lf

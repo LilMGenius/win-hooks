@@ -1,8 +1,0 @@
-#!/bin/bash
-# The bridge from a hook dispatch to the engine. win-hooks reaches its own
-# engine exactly the way a patched plugin reaches its wrapper, so if this path
-# works here it works there.
-#
-# Fail-safe: a missing runtime means no repair, never a broken session.
-command -v node >/dev/null 2>&1 || exit 0
-exec node "$(cd "$(dirname "$0")/.." && pwd)/bin/win-hooks.mjs" "$@"

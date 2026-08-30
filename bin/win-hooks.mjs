@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // win-hooks CLI - the single entry point. The plugin's own SessionStart and
-// UserPromptSubmit hooks land here too, via hooks/run-hook.cmd -> hooks/win-hooks.
+// UserPromptSubmit hooks land here too, via hooks/run-hook.cmd -> hooks/run.mjs.
 //
 //   heal [host]    silent repair; --changed-only skips when no plugin's hooks
 //                  changed since the last run (the near-free per-prompt guard);

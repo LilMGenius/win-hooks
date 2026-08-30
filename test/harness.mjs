@@ -219,18 +219,27 @@ function makeSandbox() {
       }
     },
 
-    // Dispatch a script the way Windows really does - cmd.exe running the
-    // shipped run-hook.cmd - with PATH under the test's control. The two
-    // hardcoded Git for Windows paths are redirected to a drive that cannot
-    // exist, so what is left is exactly the PATH fallback under test (CASE-29).
-    dispatch(script, { path = SYSTEM32, body = '#!/bin/bash\necho ran\n' } = {}) {
-      const template = read(join(REPO, 'hooks/run-hook.cmd'));
-      writeFileSync(join(dir, 'run-hook.cmd'),
-        template.replace(/C:\\Program Files[^"]*?bash\.exe/g, 'X:\\no-git\\bash.exe'));
-      writeFileSync(join(dir, script), body);
+    // Dispatch a hook the way Windows really does - cmd.exe running the shipped
+    // run-hook.cmd, which starts the shipped run.mjs - over a real plugin
+    // layout, with PATH under the test's control. The hardcoded Git for Windows
+    // paths are redirected to a drive that cannot exist, so what is left is
+    // exactly the PATH resolution under test (CASE-29). node is handed over by
+    // WH_NODE_EXE, because what PATH is controlling here is bash, not node.
+    dispatch(hook, { path = SYSTEM32, body = '#!/bin/bash\necho ran\n' } = {}) {
+      const pluginRoot = join(dir, 'dispatch');
+      const hookDir = join(pluginRoot, '_hooks');
+      mkdirSync(hookDir, { recursive: true });
+      mkdirSync(join(pluginRoot, 'hooks'), { recursive: true });
+      const noGit = (text) => text.replace(/C:\/Program Files[^']*?bash\.exe/g, 'X:/no-git/bash.exe');
+      writeFileSync(join(hookDir, 'run-hook.cmd'), read(join(REPO, 'hooks/run-hook.cmd')));
+      writeFileSync(join(hookDir, 'run.mjs'), noGit(read(join(REPO, 'hooks/run.mjs'))));
+      writeFileSync(join(hookDir, 'hooks.map.json'),
+        JSON.stringify({ [hook]: { exec: 'bash', target: 'hooks/' + hook } }));
+      writeFileSync(join(pluginRoot, 'hooks', hook), body);
       const r = spawnSync(join(SYSTEM32, 'cmd.exe'),
-        ['/d', '/s', '/c', join(dir, 'run-hook.cmd'), script],
-        { encoding: 'utf8', windowsHide: true, env: { SystemRoot: process.env.SystemRoot, PATH: path } });
+        ['/d', '/s', '/c', join(hookDir, 'run-hook.cmd'), hook],
+        { encoding: 'utf8', windowsHide: true,
+          env: { SystemRoot: process.env.SystemRoot, PATH: path, WH_NODE_EXE: process.execPath } });
       return { status: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
     },
 

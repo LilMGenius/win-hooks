@@ -71,6 +71,11 @@ export const opensWithQuotedPath = (cmd) => /^["']/.test(decode(cmd).trim());
 export const isDispatchable = (cmd, dispatchers) =>
   !opensWithQuotedPath(cmd) || dispatchers.every((shell) => shell === 'cmd');
 
+// The win-hooks-owned files in a wrapper directory. They are copied in, never
+// generated per hook, so everything else in that directory is a wrapper - which
+// is how the verifier tells the two apart without a naming convention.
+export const DISPATCHER_FILES = ['run-hook.cmd', 'run.mjs'];
+
 // Wrapper filenames are extensionless, so Claude Code's Windows auto-detection
 // does not prepend "bash" to anything containing ".sh" (CASE-07).
 export function wrapperName(cmd, rootVar) {

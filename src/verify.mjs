@@ -4,10 +4,10 @@
 // skills/patch/SKILL.md. Adding one means updating both.
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { hasBom, hasCrlf, readJson, readText, resolvePython, sanitize, writeText } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { brokenWrapperTarget, disabledBody, passthroughBody, relPath, wrapperBody, wrapperName } from './rules.mjs';
+import { brokenWrapperTarget, disabledBody, DISPATCHER_FILES, passthroughBody, relPath, wrapperBody, wrapperName } from './rules.mjs';
 
 const listFiles = (dir) => {
   try {
@@ -73,7 +73,7 @@ function checkTree(host, install, report, repair) {
   // ── Wrapper bodies ────────────────────────────────────────────────
   for (const file of dirFiles) {
     const name = baseName(file);
-    if (name === 'run-hook.cmd') continue;
+    if (DISPATCHER_FILES.includes(name)) continue;
     const body = readOrNull(file);
     if (body === null || !/^#!\/(bin\/bash|usr\/bin\/env bash)/.test(body)) continue;
 
@@ -137,13 +137,16 @@ function checkHooksFile(host, install, plugin, report, repair) {
     });
   }
 
-  if (needsRunHook && !existsSync(join(wrapperDir, 'run-hook.cmd'))) {
-    report('cmd_missing', host.wrapperDir + '/run-hook.cmd not found');
+  // The dispatcher is run-hook.cmd plus the run.mjs it starts; either one
+  // missing breaks every patched hook in the plugin, so both are one check.
+  for (const name of needsRunHook ? DISPATCHER_FILES : []) {
+    if (existsSync(join(wrapperDir, name))) continue;
+    report('cmd_missing', host.wrapperDir + '/' + name + ' not found');
     repair((templateCmd) => {
       if (!templateCmd) return null;
       mkdirSync(wrapperDir, { recursive: true });
-      copyFileSync(templateCmd, join(wrapperDir, 'run-hook.cmd'));
-      return 'restored ' + host.wrapperDir + '/run-hook.cmd';
+      copyFileSync(join(dirname(templateCmd), name), join(wrapperDir, name));
+      return 'restored ' + host.wrapperDir + '/' + name;
     });
   }
 }

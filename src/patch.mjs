@@ -5,10 +5,10 @@
 // by construction - no write-then-validate-then-restore dance is needed.
 
 import { existsSync, mkdirSync, copyFileSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { backupOnce, hasCommand, readJson, sanitize, writeJson, writeText } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { isIncompatible, trailingArgs, wrapperBody, wrapperName } from './rules.mjs';
+import { DISPATCHER_FILES, isIncompatible, trailingArgs, wrapperBody, wrapperName } from './rules.mjs';
 
 const scanOpts = (host) => ({ rootVar: host.rootVar, isInstalled: hasCommand });
 
@@ -39,9 +39,13 @@ function patchPlugin(host, plugin, templateCmd) {
   const wrapperDir = join(plugin.installPath, host.wrapperDir);
   mkdirSync(wrapperDir, { recursive: true });
 
-  // Always refresh run-hook.cmd (CASE-27). It is win-hooks-owned infrastructure
-  // users never edit, so template fixes must reach already-patched plugins.
-  copyFileSync(templateCmd, join(wrapperDir, 'run-hook.cmd'));
+  // Always refresh the dispatcher (CASE-27). It is win-hooks-owned
+  // infrastructure users never edit, so template fixes must reach
+  // already-patched plugins - and both files move together, because the batch
+  // half does nothing except start the run.mjs beside it.
+  for (const name of DISPATCHER_FILES) {
+    copyFileSync(join(dirname(templateCmd), name), join(wrapperDir, name));
+  }
   backupOnce(plugin.hooksFile, host.bakSuffix);
 
   const wrappers = [];

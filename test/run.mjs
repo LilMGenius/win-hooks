@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import {
   addBom, assert, assertContains, assertLacks, dispatchThrough, read, REPO, summarize, test, toCrlf,
 } from './harness.mjs';
-import { isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
+import { DISPATCHER_FILES as DISPATCHER, isDispatchable, isIncompatible, trailingArgs, wrapperName } from '../src/rules.mjs';
 import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
@@ -75,7 +75,7 @@ test('the shipped hook manifests declare timeouts in seconds', () => {
 
 test('CASE-03: the repo pins LF, and the files bash executes carry no CRLF', () => {
   assertContains(join(REPO, '.gitattributes'), '* text=auto eol=lf');
-  for (const name of ['hooks/run-hook.cmd', 'hooks/win-hooks']) {
+  for (const name of ['hooks/run-hook.cmd']) {
     assertContains(join(REPO, '.gitattributes'), name + ' text eol=lf');
     assertLacks(join(REPO, name), '\r\n');
   }
@@ -179,7 +179,7 @@ test('CASE-13: a plugin update that reverts hooks.json is re-patched', (sb) => {
 test('CASE-08: a missing-binary hook gets a dependency-checked wrapper', (sb) => {
   const plugin = sb.install('bareMissing', 'case08');
   sb.run('heal', 'claude');
-  const generated = readdirSync(join(plugin, '_hooks')).filter((f) => f !== 'run-hook.cmd');
+  const generated = readdirSync(join(plugin, '_hooks')).filter((f) => !DISPATCHER.includes(f));
   assert(generated.length === 1, 'expected exactly one wrapper, got: ' + generated);
   const wrapper = join(plugin, '_hooks', generated[0]);
   assertContains(wrapper, 'command -v "wh-test-nonexistent-binary-xyz"');
@@ -264,7 +264,10 @@ test('CASE-27: a stale run-hook.cmd is refreshed from the shipped template', (sb
   writeFileSync(cmd, '@echo off\nrem STALE\n');
   sb.run('heal', 'claude');
   assertLacks(cmd, 'STALE');
-  assertContains(cmd, 'WH_BASH_EXE');
+  assertContains(cmd, 'WH_NODE_EXE');
+  // The dispatcher is two files now, and a refresh that moved only one of them
+  // would leave a batch half starting a run.mjs that is missing or older.
+  assertContains(join(plugin, '_hooks/run.mjs'), read(join(REPO, 'hooks/run.mjs')));
 });
 
 // -- State directory and the per-prompt guard --------------------------
@@ -313,8 +316,11 @@ test('CASE-26: the hot path still heals a newly installed plugin', (sb) => {
 // -- Dispatch ----------------------------------------------------------
 
 test('CASE-29: a PATH bash that cannot read Windows paths is refused', (sb) => {
-  // where.exe stands in for the WSL launcher: it is a real executable that
-  // ignores -c and exits 0, exactly the shape that swallowed every hook.
+  // where.exe stands in for a bash on PATH that cannot run the script. Name
+  // resolution accepts it, so only the functional probe can reject it - and
+  // WSL's launcher fails that same probe, because `test -f` on a Windows path
+  // is false inside the guest. That is why the check is a probe and not a
+  // blacklist of the two paths WSL happens to install to.
   const decoy = join(sb.dir, 'bash.exe');
   copyFileSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32/where.exe'), decoy);
   const refused = sb.dispatch('hello', { path: sb.dir });
@@ -453,7 +459,7 @@ test('CASE-32: session start announces the run, and nothing else writes to stdou
 // a sentence in AGENTS.md does not survive the next session that meets the
 // symptom - so the ban is a gate over the shipped bytes.
 test('CASE-33: nothing shipped can grant win-hooks its own Codex hook trust', () => {
-  const shipped = ['bin/win-hooks.mjs', 'hooks/win-hooks', 'hooks/run-hook.cmd',
+  const shipped = ['bin/win-hooks.mjs', 'hooks/run.mjs', 'hooks/run-hook.cmd',
     ...readdirSync(join(REPO, 'src')).map((f) => 'src/' + f)];
   for (const rel of shipped) {
     const body = read(join(REPO, rel));

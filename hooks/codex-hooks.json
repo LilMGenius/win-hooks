@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${PLUGIN_ROOT}/hooks/win-hooks\" heal codex --announce",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/run-hook.cmd\" win-hooks heal codex --announce",
             "commandWindows": "cmd /c \"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" win-hooks heal codex --announce",
             "timeout": 60,
             "statusMessage": "win-hooks: checking Codex plugin hooks"
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${PLUGIN_ROOT}/hooks/win-hooks\" heal codex --changed-only",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/run-hook.cmd\" win-hooks heal codex --changed-only",
             "commandWindows": "cmd /c \"${PLUGIN_ROOT}\\hooks\\run-hook.cmd\" win-hooks heal codex --changed-only",
             "timeout": 20,
             "statusMessage": "win-hooks: checking changed Codex plugin hooks"
