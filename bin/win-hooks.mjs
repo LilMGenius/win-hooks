@@ -114,9 +114,17 @@ function report({ host, plugins, incompatible, issues, settings }, heading) {
     + ' - ' + plugins.length + ' hook file(s) scanned';
   const lines = [title];
 
-  for (const i of incompatible) lines.push('  incompatible  ' + i.id + '  [' + i.event + ']  ' + i.command);
-  for (const i of issues) lines.push('  ' + i.type.padEnd(14) + i.plugin + '  ' + i.detail);
-  for (const s of settings) lines.push('  ' + s.type.padEnd(14) + s.path + '  ' + s.to);
+  // The label column is measured, not guessed: a fixed width silently ran the
+  // longest issue types into the plugin name beside them.
+  const rows = [
+    ...incompatible.map((i) => ['incompatible', i.id + '  [' + i.event + ']', i.command]),
+    ...issues.map((i) => [i.type, i.plugin, i.detail]),
+    ...settings.map((s) => [s.type, s.path, s.to]),
+  ];
+  const width = Math.max(0, ...rows.map(([type]) => type.length));
+  for (const [type, subject, detail] of rows) {
+    lines.push('  ' + type.padEnd(width) + '  ' + subject + '  ' + detail);
+  }
   if (lines.length === 1) lines.push('  healthy - every hook is Windows-compatible');
   return lines.join('\n');
 }
