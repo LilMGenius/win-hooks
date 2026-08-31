@@ -113,16 +113,17 @@ function checkTree(host, install, report, repair) {
 function checkDispatcher(host, hookDir, templateCmd, report, repair) {
   for (const name of DISPATCHER_FILES) {
     const target = join(hookDir, name);
-    const shipped = templateCmd ? readOrNull(join(dirname(templateCmd), name)) : null;
+    const source = templateCmd ? join(dirname(templateCmd), name) : null;
+    const shipped = source ? readOrNull(source) : null;
     const state = !existsSync(target) ? 'not found'
       : shipped !== null && readOrNull(target) !== shipped ? 'is stale'
       : null;
     if (!state) continue;
     report('cmd_missing', host.hookDir + '/' + name + ' ' + state);
-    repair((template) => {
-      if (!template) return null;
+    if (!source) continue;
+    repair(() => {
       mkdirSync(hookDir, { recursive: true });
-      copyFileSync(join(dirname(template), name), target);
+      copyFileSync(source, target);
       return 'restored ' + host.hookDir + '/' + name;
     });
   }
@@ -205,8 +206,8 @@ export function verify(host, { fix = false, templateCmd = null, plugins = host.l
       report: (type, detail) => issues.push({ plugin: plugin.id, path: install.path, type, detail }),
       repair: (action) => {
         if (!fix) return;
-        let done;
-        try { done = action(templateCmd); } catch (e) { done = 'repair failed: ' + e.message; }
+       let done;
+        try { done = action(); } catch (e) { done = 'repair failed: ' + e.message; }
         if (done) fixes.push(done);
       },
     });
