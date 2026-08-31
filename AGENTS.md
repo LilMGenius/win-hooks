@@ -28,8 +28,8 @@
 
 - **Line 1 is an `## ` heading** — this version's one-line title. The release page's own title is always the bare `win-hooks X.Y.Z`, so the heading is where the story goes.
 - **Then two or three paragraphs of prose**, saying what changed for the person reading and why it was worth doing.
-- **Then the sections, in this order**, each one optional except the last two: `### New`, `### Fixed`, `### Also`, `### What it repairs`, `### Install`. The first three are bullets, one line each.
-- **The catalog is the same four bullets every release**, updated in place, so a reader landing on any version sees the whole product. It carries no count: these are families, while `skills/patch/SKILL.md` holds the engine's report vocabulary, and a number on the heading reads as a claim about whichever set the reader last saw.
+- **Then the sections, in this order**, each one optional except the last: `### New`, `### Fixed`, `### Also`, `### Install`. The first three are bullets, one line each.
+- **A release says only what that release changed.** What win-hooks repairs is the README's to state, and the notes carry one line linking there, directly above `### Install`. Repeating the catalog on every page made a reader scrolling the releases list read the same four bullets five times, and put the product description somewhere it had to be updated in five places to stay true.
 - **`### Install` is last**, indented four spaces: a fenced block survives inside a tag message, but indenting is what the signature strip leaves alone.
 - **Credit a contribution in plain text** — `thanks to @user (#N)`, never `[@user](url)` or `[#N](url)`. GitHub builds the release page's Contributors list by scanning the body for bare `@mention` and `#issue` autolinks; wrapped in a markdown link they render identically and are counted as nothing, which is how v1.10.0 shipped its only outside contribution uncredited.
 

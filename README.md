@@ -59,6 +59,8 @@ You installed a plugin. It works fine for everyone on a Mac. On your machine it 
 
 None of that is your fault. Almost every plugin is written and tested on macOS or Linux, so its hooks assume Unix tools that Windows does not have.
 
+It also repairs the damage no error message shows you: CRLF line endings, a `hooks.json` no parser will read, and the patched hook entries themselves - one that went missing, one that calls an interpreter on itself, one aimed at a target that is gone, and files an older win-hooks left behind.
+
 ## How it stays fixed
 
 win-hooks repairs your plugins at every session start, including ones you install later, ones that break again after an update, and ones an older win-hooks left behind. Repairs are written next to the original file, never on top of it, and anything already working is left alone.
