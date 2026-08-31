@@ -90,6 +90,17 @@ export const FIXTURES = {
     '_hooks/run-hook.cmd': RUN_HOOK,
     '_hooks/run.mjs': '// an older release\'s run.mjs\n',
   },
+
+  // CASE-34: a hook directory still holding the scripts the descriptor
+  // replaced - one the map now shadows, one named by flattening a command line.
+  orphanWrapper: {
+    'hooks/hooks.json': manifest('SessionStart', '"' + R + '/_hooks/run-hook.cmd" session-start'),
+    'hooks/session-start.sh': script('echo "session-start ran"'),
+    ['_hooks/' + MAP_FILE]: map({ 'session-start': { exec: 'bash', target: 'hooks/session-start.sh' } }),
+    '_hooks/session-start': script('exec bash "$PLUGIN_ROOT/hooks/session-start.sh" "$@"'),
+    '_hooks/bash-CLAUDEPLUGINROOThooksstop-hooksh': script('exec bash "$@"'),
+    '_hooks/run-hook.cmd': RUN_HOOK,
+  },
 };
 
 // Write one fixture into `dir`, and return `dir`.

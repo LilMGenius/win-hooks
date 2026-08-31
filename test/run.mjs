@@ -12,7 +12,7 @@ import {
   addBom, assert, assertContains, assertLacks, dispatchThrough, hookMap, read, REPO, summarize, test,
   toCrlf,
 } from './harness.mjs';
-import { isDispatchable, isIncompatible, MAP_FILE, trailingArgs, hookName } from '../src/rules.mjs';
+import { DISPATCHER_FILES, isDispatchable, isIncompatible, MAP_FILE, orphanHookFiles, trailingArgs, hookName } from '../src/rules.mjs';
 import { eachHook, HOSTS } from '../src/hosts.mjs';
 
 const healthy = (sb, host) => {
@@ -57,6 +57,16 @@ test('CASE-10: only the arguments after the script path are preserved', () => {
 test('hook names are extensionless and derived from the target', () => {
   assert(hookName('bash ' + R + '/hooks/my_hook.sh', 'CLAUDE_PLUGIN_ROOT') === 'my-hook', 'underscore -> dash, no extension');
   assert(hookName('tool mcp -k inject-defaults', 'CLAUDE_PLUGIN_ROOT') === 'inject-defaults', 'keyed invocation names itself');
+});
+
+test('CASE-34: a wrapper the map shadows is a leftover, one it does not is a bridge', () => {
+  const files = ['run-hook.cmd', 'run.mjs', MAP_FILE, 'session-start', 'not-yet-an-entry', 'bash-CLAUDEPLUGINROOThooksxsh'];
+  const orphans = orphanHookFiles(files, { 'session-start': { target: 'hooks/session-start.sh' } },
+    ['session-start', 'not-yet-an-entry']);
+  assert(!orphans.includes('not-yet-an-entry'),
+    'a dispatched name the map does not define is the only way that hook runs: ' + orphans.join(', '));
+  assert(orphans.join(',') === 'session-start,bash-CLAUDEPLUGINROOThooksxsh',
+    'the shadowed wrapper and the undispatched name are what nothing can reach: ' + orphans.join(', '));
 });
 
 // -- Shipped files: what win-hooks cannot repair for itself ------------
@@ -309,6 +319,27 @@ test('CASE-27: a stale dispatcher is caught by verify when setup never runs', (s
   assertContains(join(plugin, '_hooks/run.mjs'), read(join(REPO, 'hooks/run.mjs')));
   assertContains(join(plugin, '_hooks/run-hook.cmd'), read(join(REPO, 'hooks/run-hook.cmd')));
   healthy(sb, 'claude');
+});
+
+test('CASE-34: heal removes the wrappers the descriptor map replaced', (sb) => {
+  const plugin = sb.install('orphanWrapper', 'case34');
+  const before = statusOf(sb);
+  assert(before.includes('wrapper_orphan'), 'status must report a file nothing dispatches: ' + before);
+
+  sb.run('heal', 'claude');
+  const left = readdirSync(join(plugin, '_hooks')).sort().join(',');
+  assert(left === [...DISPATCHER_FILES, MAP_FILE].sort().join(','),
+    'the hook directory should hold only what win-hooks owns, got: ' + left);
+  healthy(sb, 'claude');
+});
+
+test('CASE-34: a hooks.json that will not parse prunes nothing', (sb) => {
+  const plugin = sb.install('orphanWrapper', 'case34guard');
+  const hooks = join(plugin, 'hooks/hooks.json');
+  writeFileSync(hooks, read(hooks).replace(/}\n$/, ''));
+  sb.run('heal', 'claude');
+  assert(existsSync(join(plugin, '_hooks/session-start')),
+    'an unknown reachable set must leave every file where it is');
 });
 
 // -- State directory and the per-prompt guard --------------------------

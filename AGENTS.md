@@ -231,6 +231,12 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 - **Detail**: the probe path travels through the environment, not as `$0`. Passing it as `$0` makes WSL's launcher report `$0` as `/bin/bash`, so `test -f` passes and the probe accepts the very interpreter it exists to reject.
 - **Rejected**: blacklisting `System32\bash.exe` and `WindowsApps\bash.exe` by path — cheaper, but a path heuristic, and it would still accept a broken bash anywhere else.
 
+### CASE-34: the pre-descriptor layout is still on disk, and reads as a second one
+- **Symptom**: none at run time. A patched plugin's `_hooks/` holds a bash script per hook next to the descriptor map — including awk-era names built by flattening a whole command line, such as `bash-CLAUDEPLUGINROOThooksstop-hooksh`.
+- **Root cause**: patching used to generate one wrapper script per hook, and the descriptor map replaced the mechanism without removing its output. Nothing dispatches those files, but `hooks/run.mjs` keeps a bridge for exactly this shape — a bare file whose name the map does not define — so a reader cannot tell a live bridge from a leftover by looking, and neither could the engine.
+- **Fix**: `orphanHookFiles` in `src/rules.mjs` states what a hook directory may hold: the two `DISPATCHER_FILES`, the map, and one bridge per dispatched name the map does not define. `verify --fix` deletes the rest. Reachability is read from every hooks file in the install tree at once and the prune is skipped entirely unless all of them parsed, because an incomplete picture of what is dispatched would condemn the wrapper some hook still runs through.
+- **Issue type**: `wrapper_orphan`
+
 ---
 
 ## Plugin Discovery & Hosts

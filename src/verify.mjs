@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } fr
 import { dirname, join } from 'node:path';
 import { hasBom, hasCrlf, readJson, readText, resolvePython, sanitize, writeText } from './env.mjs';
 import { eachHook } from './hosts.mjs';
-import { brokenEntry, DISPATCHER_FILES, hookEntry, MAP_FILE, NEUTRALIZED_SCRIPT, readHookMap, relPath, hookName, writeHookMap } from './rules.mjs';
+import { brokenEntry, DISPATCHER_FILES, hookEntry, MAP_FILE, NEUTRALIZED_SCRIPT, orphanHookFiles, readHookMap, relPath, hookName, writeHookMap } from './rules.mjs';
 
 const listFiles = (dir) => {
   try {
@@ -22,6 +22,22 @@ const baseName = (file) => file.split(/[\\/]/).pop();
 const readOrNull = (file) => {
   try { return readText(file); } catch { return null; }
 };
+
+// What one hooks file dispatches through win-hooks, as the argument text that
+// follows run-hook.cmd: the hook name, plus whatever an older patch form
+// forwarded after it. One rule, because the directory-level prune and the
+// per-file entry check have to agree on which hooks are reachable.
+function dispatchedArgs(host, data) {
+  const args = [];
+  for (const { hook } of eachHook(data)) {
+    const patched = String(host.patchedCommand(hook) || '').replace(/\\/g, '/');
+    if (!patched.includes(host.hookDir + '/run-hook.cmd')) continue;
+    args.push(patched.replace(/^.*run-hook\.cmd"?\s*/i, ''));
+  }
+  return args;
+}
+
+const hookNameOf = (rest) => (rest.match(/^"?([^"\s]+)/) || [])[1];
 
 // Recover the pre-patch command for a hook by replaying the naming rule over
 // the backups. That is what lets a deleted hook entry be rebuilt exactly (CASE-16).
@@ -103,6 +119,26 @@ function checkTree(host, install, report, repair) {
       return 'repaired hook entry ' + name;
     });
   }
+
+  // ── CASE-34: a file the pre-descriptor layout left behind ───────────
+  // Reachability is decided from every hooks file in the tree at once, and
+  // only when all of them parsed: an incomplete picture of what is dispatched
+  // would condemn a wrapper that is still the only way one hook runs.
+  const parsed = install.hooksFiles.map((file) => readJson(file));
+  if (!parsed.every((p) => p.ok)) return;
+  const dispatched = parsed
+    .flatMap((p) => dispatchedArgs(host, p.data))
+    .map(hookNameOf)
+    .filter(Boolean);
+
+  for (const name of orphanHookFiles(listFiles(hookDir).map(baseName), map, dispatched)) {
+    report('wrapper_orphan', name + ' is dispatched by nothing');
+    repair(() => {
+      const file = join(hookDir, name);
+      rmSync(file);
+      return 'removed leftover ' + rel(file);
+    });
+  }
 }
 
 // The dispatcher is run-hook.cmd plus the run.mjs it starts, and present is not
@@ -135,18 +171,15 @@ function checkHooksFile(host, install, plugin, templateCmd, report, repair) {
   const { ok, data, error } = readJson(plugin.hooksFile);
   if (!ok) return report('json_invalid', error);
 
-  const dispatched = [];
   for (const { hook } of eachHook(data)) {
     // A python hook still running bare on a machine with no usable interpreter
     // can never succeed; say so rather than failing silently (CASE-09/21).
     if (/^python3?\s/.test(String(host.sourceCommand(hook) || '').trim()) && !resolvePython()) {
       report('python3_stub', 'hook uses python but no working interpreter is installed');
     }
-
-    const patched = String(host.patchedCommand(hook) || '').replace(/\\/g, '/');
-    if (!patched.includes(host.hookDir + '/run-hook.cmd')) continue;
-    dispatched.push(patched.replace(/^.*run-hook\.cmd"?\s*/i, ''));
   }
+
+  const dispatched = dispatchedArgs(host, data);
   if (!dispatched.length) return;
 
   // Before the entry repairs below, not after: they delete the legacy wrapper
@@ -156,7 +189,7 @@ function checkHooksFile(host, install, plugin, templateCmd, report, repair) {
 
   const map = readHookMap(hookDir);
   for (const rest of dispatched) {
-    const name = (rest.match(/^"?([^"\s]+)/) || [])[1];
+    const name = hookNameOf(rest);
     if (!name) { report('wrapper_missing', 'hook name is not parseable'); continue; }
     if (map[name]) continue;
 
@@ -206,7 +239,7 @@ export function verify(host, { fix = false, templateCmd = null, plugins = host.l
       report: (type, detail) => issues.push({ plugin: plugin.id, path: install.path, type, detail }),
       repair: (action) => {
         if (!fix) return;
-       let done;
+        let done;
         try { done = action(); } catch (e) { done = 'repair failed: ' + e.message; }
         if (done) fixes.push(done);
       },

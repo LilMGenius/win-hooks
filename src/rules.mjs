@@ -72,9 +72,8 @@ export const opensWithQuotedPath = (cmd) => /^["']/.test(decode(cmd).trim());
 export const isDispatchable = (cmd, dispatchers) =>
   !opensWithQuotedPath(cmd) || dispatchers.every((shell) => shell === 'cmd');
 
-// The win-hooks-owned files in a hook directory. They are copied in from the
-// shipped template and never generated per hook, so a file sitting there under
-// any other name is a leftover from the pre-descriptor layout.
+// The two halves of the dispatcher, copied into a hook directory from the
+// shipped template and never generated per hook.
 export const DISPATCHER_FILES = ['run-hook.cmd', 'run.mjs'];
 
 // Hook names are extensionless, so Claude Code's Windows auto-detection
@@ -112,6 +111,16 @@ export const readHookMap = (dir) => {
 };
 
 export const writeHookMap = (dir, map) => writeJson(join(dir, MAP_FILE), map);
+
+// CASE-34: what a hook directory may hold - the dispatchers, the map, and the
+// pre-map wrappers run.mjs still bridges to, one per dispatched name the map
+// does not define. Nothing can reach the rest: a name the map defines is served
+// from the entry, and a name no hooks.json dispatches is never asked for.
+export function orphanHookFiles(names, map, dispatched) {
+  const bridged = new Set(dispatched.filter((name) => !map[name]));
+  return names.filter((name) =>
+    !DISPATCHER_FILES.includes(name) && name !== MAP_FILE && !bridged.has(name));
+}
 
 // The descriptor that replaces one incompatible command.
 export function hookEntry(cmd, rootVar) {

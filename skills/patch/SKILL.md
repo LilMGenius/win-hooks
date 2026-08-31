@@ -68,6 +68,7 @@ there is nothing left to do. The line prefixes are a closed vocabulary:
 | `json_invalid` | hooks.json is not parseable |
 | `wrapper_missing` | A patched hook has no entry in the hook map |
 | `wrapper_broken` | A hook entry names a target that cannot run |
+| `wrapper_orphan` | A file in the hook directory that nothing dispatches |
 | `cmd_missing` | The dispatcher is missing from the hook directory, or older than the shipped one |
 | `recursive_wrapper` | A hook script calls an interpreter on itself and loops |
 | `python3_stub` | A python hook with no working interpreter installed |
