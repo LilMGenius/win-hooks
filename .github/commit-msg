@@ -8,9 +8,17 @@ msg=$1
 text=$(sed '/^# -* >8 -*$/,$d' "$msg" | grep -v '^#')
 subject=$(printf '%s\n' "$text" | sed -n '1p')
 case "$subject" in Merge\ *|Revert\ *) exit 0 ;; esac
-if ! printf '%s' "$subject" | grep -Eq '^(feat|fix|docs|refactor|perf|test|chore|ci|build|style)\([a-z0-9._/-]+\)!?: .+'; then
+if ! printf '%s' "$subject" | grep -Eq '^(feat|fix|docs|refactor|perf|test|chore|ci|build|style|revert)\([a-z0-9._/-]+\)!?: .+'; then
   echo "commit-msg: the subject is not type(scope): problem"
   echo "  $subject"
+  exit 1
+fi
+case "$subject" in
+  *.) echo 'commit-msg: the subject ends with a period'; exit 1 ;;
+esac
+second=$(printf '%s\n' "$text" | sed -n '2p')
+if [ -n "$second" ]; then
+  echo 'commit-msg: the second line is not blank'
   exit 1
 fi
 len=$(printf '%s' "$subject" | wc -c | tr -d ' ')

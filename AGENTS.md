@@ -22,7 +22,7 @@
 
 ### Commits and releases
 
-**Commit messages:** one bullet per line, no wrapping inside a bullet, no co-author tags, no version-bump lines.
+**Commit messages:** a `type(scope): problem` subject of at most 72 characters, then one bullet per line, no wrapping inside a bullet, no co-author tags, no version-bump lines. `.github/commit-msg` checks every pushed message through `.github/workflows/commits.yml`; both are copies of the vibeghost floor.
 
 **Release notes are written once, in the tag.** There is no CHANGELOG: the annotated tag's message *is* the release notes, and the workflow reads it back through the API to build the release page, so nothing is written twice at release time. Write it with `git tag -s vX.Y.Z -F <notes> --cleanup=verbatim`, shaped as:
 
