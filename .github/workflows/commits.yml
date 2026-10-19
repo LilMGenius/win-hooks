@@ -1,0 +1,30 @@
+name: commits
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  commits:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Locate the commit checker
+        run: |
+          if [ -f .github/commit-range.mjs ]; then
+            echo 'COMMIT_RANGE=.github/commit-range.mjs' >> "$GITHUB_ENV"
+          else
+            echo 'COMMIT_RANGE=hooks/commit-range.mjs' >> "$GITHUB_ENV"
+          fi
+      - if: github.event_name == 'pull_request'
+        run: node "$COMMIT_RANGE" --pr "$BASE_SHA" "$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - if: github.event_name == 'push'
+        run: node "$COMMIT_RANGE" --push "$BEFORE_SHA" "$GITHUB_SHA"
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
