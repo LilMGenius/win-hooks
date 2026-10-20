@@ -2,6 +2,7 @@ name: commits
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 jobs:
@@ -24,6 +25,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - if: github.event_name == 'pull_request'
+        name: Check the subject a squash merge writes
+        run: |
+          printf '%s (#%s)\n' "$PR_TITLE" "$PR_NUMBER" > "$RUNNER_TEMP/squash-message"
+          node "$COMMIT_RANGE" --message "$RUNNER_TEMP/squash-message"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
       - if: github.event_name == 'push'
         run: node "$COMMIT_RANGE" --push "$BEFORE_SHA" "$GITHUB_SHA"
         env:
