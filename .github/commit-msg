@@ -1,0 +1,39 @@
+#!/bin/sh
+# type(scope): problem, at most 72 ASCII characters; body lines are "- " bullets.
+# re0-git's commit-economy owns the form. Adapted from DaedalGames/coggs-ai hooks/commit-msg.
+# Measured 2026-10-18: three repositories enforced different subsets; 35/200 daedal-games
+# subjects and 113/200 on feat/gtg exceeded 72 characters. One floor copy prevents drift.
+msg=$1
+# git commit -v appends the diff under a scissors line; nothing below it is the message.
+text=$(sed '/^# -* >8 -*$/,$d' "$msg" | grep -v '^#')
+subject=$(printf '%s\n' "$text" | sed -n '1p')
+case "$subject" in Merge\ *|Revert\ *) exit 0 ;; esac
+if ! printf '%s' "$subject" | grep -Eq '^(feat|fix|docs|refactor|perf|test|chore|ci|build|style|revert)\([a-z0-9._/-]+\)!?: .+'; then
+  echo "commit-msg: the subject is not type(scope): problem"
+  echo "  $subject"
+  exit 1
+fi
+case "$subject" in
+  *.) echo 'commit-msg: the subject ends with a period'; exit 1 ;;
+esac
+second=$(printf '%s\n' "$text" | sed -n '2p')
+if [ -n "$second" ]; then
+  echo 'commit-msg: the second line is not blank'
+  exit 1
+fi
+len=$(printf '%s' "$subject" | wc -c | tr -d ' ')
+if [ "$len" -gt 72 ]; then
+  echo "commit-msg: the subject is $len characters; the cap is 72"
+  echo "  $subject"
+  exit 1
+fi
+if printf '%s\n' "$text" | LC_ALL=C grep -q '[^[:print:][:blank:]]'; then
+  echo 'commit-msg: the message carries a non-ASCII byte; subject and body are English'
+  exit 1
+fi
+stray=$(printf '%s\n' "$text" | sed '1d' | grep -v '^$' | grep -v '^- ' | sed -n '1p')
+if [ -n "$stray" ]; then
+  echo 'commit-msg: every body line is one "- " bullet; this one is a wrapped line or a trailer'
+  echo "  $stray"
+  exit 1
+fi
