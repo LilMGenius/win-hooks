@@ -1,3 +1,5 @@
 *.bak
 *.tmp
 *.local*
+.omo/
+.re0/
