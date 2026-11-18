@@ -96,6 +96,7 @@ running session has already cached its hook config - tell the user to run
 
 ## Troubleshooting
 
+- **Codex shows only `hook exited with code N`:** Codex hides the hook's stderr, and the code depends on the session shell (a missing script is exit 1 under `pwsh -Command`, -196608 under `cmd /C`). Replay the hook's `commandWindows` from its `hooks/*.json` under `pwsh -Command`, with `${PLUGIN_ROOT}` replaced by the version directory the session loaded, and read the stderr there. A path into an emptied or missing version directory is CASE-35.
 - **Still failing after a repair:** read the plugin's `_hooks/hooks.map.json` and
   run `claude --debug hooks`. If the entry runs a shell script, confirm Git Bash
   at `C:\Program Files\Git\bin\bash.exe`, or set `WH_BASH_EXE` for a
