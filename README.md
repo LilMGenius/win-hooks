@@ -56,6 +56,7 @@ You installed a plugin. It works fine for everyone on a Mac. On your machine it 
 | `Python was not found; ... Microsoft Store` | Windows' fake `python3` placeholder shadowing your real one |
 | `JSON Parse error: Unrecognized token` | An invisible byte (BOM) at the top of a config file |
 | `Cannot find module 'C:\Users...'` | Backslashes in a path getting eaten before the hook runs |
+| `hook exited with code 1` on every hook, in a Codex session that was fine an hour ago | Another Codex window updated the plugin and deleted the version this session was running |
 
 None of that is your fault. Almost every plugin is written and tested on macOS or Linux, so its hooks assume Unix tools that Windows does not have.
 

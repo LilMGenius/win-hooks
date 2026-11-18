@@ -6,7 +6,8 @@
 // Coverage is derived by the harness from these test names, so a test that
 // proves a CASE must name it.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   addBom, assert, assertContains, assertLacks, dispatchThrough, hookMap, read, REPO, summarize, test,
@@ -575,6 +576,50 @@ test('CASE-30: patch on a healthy host reports without repairing', (sb) => {
   const { out } = sb.run('patch', 'claude');
   assert(out.includes('healthy'), 'a healthy host still gets a report: ' + out);
   assert(healRuns(sb) === before, 'a healthy host must not be repaired again: ' + before + ' -> ' + healRuns(sb));
+});
+
+// -- Stale plugin roots (Codex) ----------------------------------------
+
+// A Codex cache laid out the way a marketplace upgrade run by another Codex
+// process leaves it on Windows: the new version installed beside the old one,
+// and the old one emptied but still on disk because a live session holds it.
+function stageCodexCache(sb, version, { emptied = false } = {}) {
+  const root = join(sb.home, '.codex/plugins/cache/mkt/demo', version);
+  mkdirSync(root, { recursive: true });
+  if (emptied) return root;
+  mkdirSync(join(root, '.codex-plugin'), { recursive: true });
+  writeFileSync(join(root, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'demo', version }));
+  mkdirSync(join(root, 'components/check/dist'), { recursive: true });
+  writeFileSync(join(root, 'components/check/dist/cli.js'), "console.log('ran " + version + "');\n");
+  return root;
+}
+
+// What a live session's hook does: run a script under the root it loaded.
+const runFrom = (root) => spawnSync(process.execPath, [join(root, 'components/check/dist/cli.js')], { encoding: 'utf8' });
+
+test('CASE-35: a version directory a live session still runs from is linked to the installed one', (sb) => {
+  sb.install('shScript', 'case35', 'codex');
+  sb.run('heal', 'codex');
+  const whole = stageCodexCache(sb, '0.9.0');
+  const stale = stageCodexCache(sb, '1.0.0', { emptied: true });
+  const installed = stageCodexCache(sb, '1.1.0');
+  assert(runFrom(stale).status !== 0, 'the emptied root should fail before the repair');
+
+  // The hot path, since the upgrade moved nothing the per-prompt guard watches.
+  const { out } = sb.run('heal', 'codex', '--changed-only');
+  const after = runFrom(stale);
+  assert(after.status === 0 && after.stdout.includes('ran 1.1.0'),
+    'the session\'s hook should run the installed version, got ' + after.status + ': ' + after.stderr);
+  assert(out.includes('demo/1.0.0'), 'the repair should be reported, got: ' + out);
+  assert(!existsSync(join(stale, '.codex-plugin')), 'a restored root must not read as an installed version');
+  assert(!lstatSync(join(whole, 'components')).isSymbolicLink(), 'a version left whole must stay untouched');
+  assert(!sb.run('heal', 'codex', '--changed-only').out.includes('demo/1.0.0'), 'a restored root needs no second repair');
+
+  // The next upgrade removes the version the links point at.
+  rmSync(installed, { recursive: true, force: true });
+  stageCodexCache(sb, '1.2.0');
+  sb.run('heal', 'codex', '--changed-only');
+  assert(runFrom(stale).stdout.includes('ran 1.2.0'), 'links should follow the newly installed version');
 });
 
 summarize('win-hooks test suite', {

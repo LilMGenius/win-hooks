@@ -121,6 +121,8 @@ const codex = {
   // Codex records every install, removal, enable, and marketplace update in
   // config.toml, so one stat covers the whole plugin set.
   registry: [join(HOME, '.codex/config.toml')],
+  // Where Codex keeps one directory per installed plugin version (CASE-35).
+  cacheDir: join(HOME, '.codex/plugins/cache'),
   listPlugins: listCodexPlugins,
   // A hook that already carries commandWindows is patched; leave the portable
   // command alone so it still runs natively on macOS and Linux.

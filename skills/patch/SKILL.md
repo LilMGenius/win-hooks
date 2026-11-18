@@ -32,6 +32,7 @@ CASE-NN.
 | `'node' is not recognized...` / `'node'은(는) 내부 또는 외부 명령...` (mojibake `'node'��...`) | a bare interpreter in settings.json not on cmd.exe's PATH | CASE-23 |
 | `bash: .../<interpreter>: No such file or directory` | a hook entry whose target is the interpreter name instead of the script | CASE-24 |
 | `Python was not found; run without arguments to install from the Microsoft Store` | bare `python3` resolving to the Store alias stub | CASE-09 |
+| `hook exited with code 1` on every hook of one plugin in an open Codex session, from the moment another Codex process started | that process upgraded the plugin and deleted the version directory the session loaded | CASE-35 |
 
 The two CP949-garbled errors look alike but are not: `<<(을)를 지정된 경로...` is a
 BOM-corrupted polyglot `.cmd` (CASE-01), `'node'...내부 또는 외부 명령` is a bare

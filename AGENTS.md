@@ -56,6 +56,7 @@ src/verify.mjs       post-patch health checks + auto-repair (issue-type vocabula
 src/settings.mjs     ~/.claude/settings.json hook-command rewrites
 src/rules.mjs        domain SSOT: what is incompatible, hook names, descriptor shapes
 src/hosts.mjs        Claude vs Codex descriptors + plugin enumeration
+src/stale.mjs        relinks a Codex plugin version an open session still runs from (CASE-35)
 src/env.mjs          functional interpreter probes, encoding-safe file IO
 hooks/run-hook.cmd   cmd.exe/bash polyglot entry point (BOM-free, CASE-01)
 hooks/run.mjs        dispatcher: resolves a hook name and runs it (CASE-29)
@@ -268,6 +269,13 @@ Every Windows compatibility issue win-hooks detects, fixes, or documents. Sectio
 - **Reporting**: one manifest change invalidates **both** Codex entries at once, so win-hooks cannot report its own untrust from inside its own Codex hooks. The surfaces that survive carry it instead: `patch` and `status`, which a person runs directly, and the Claude Code SessionStart hook, which heals both hosts from the one host still dispatching.
 - **Rejected**: re-deriving the hash so a heal could re-trust itself. It is the wrong thing to want, and it is not available either — sha256 over the command string, over `commandWindows`, over the hook object, over the manifest bytes, and over file-plus-event-key all miss.
 - **Note**: a host's trust policy is not a Windows defect, so this adds **no issue type**.
+
+### CASE-35: every hook of an open Codex session exits 1 after another Codex process upgraded the plugin
+- **Symptom**: an open session prints `Hook failed └ hook exited with code 1` on every hook of one plugin, several per tool call, from one moment on; a new session is fine. Nothing names the hook or the cause, because Codex hides the hook's stderr.
+- **Root cause**: Codex expands `${PLUGIN_ROOT}` to the versioned cache directory once, when a session loads its hooks (openai/codex#31383). Any other Codex process that starts later (the desktop app, `codex exec`, a new TUI) resyncs a Git marketplace, installs the next version and deletes the old one, so the open session's hooks name files that are gone. Under the session's PowerShell a missing script is a failed native command, which `pwsh -Command` turns into exit 1. Measured 2026-11-19: the desktop app started at 05:27:19, `omo/5.1.77` was created at 05:27:48 and `omo/5.1.75` emptied at 05:27:53, and a TUI session opened the evening before failed every omo hook from then on; replaying its commands gave exit 1 under 5.1.75 and exit 0 under 5.1.77.
+- **Fix**: every heal, the per-prompt one included, links each directory of the newest installed version into every emptied version directory with a junction (`src/stale.mjs`), so the open sessions run the installed code until they end. It runs before the `--changed-only` guard, because the upgrade moves nothing the guard watches. A version directory holding any real file is left alone, and the restored one gets no `.codex-plugin`, so Codex never reads it as installed; Codex's own cleanup removes a junction without following it.
+- **Limit**: Windows usually leaves the old directory on disk because a process the open session started still holds it. When nothing held it and it is gone, its name is unknown and that session still needs a restart.
+- **Note**: a Codex cache lifetime defect, not a Windows hook incompatibility, so it adds **no issue type**; the repair prints one `relinked` line to stderr and counts `restored` in the heartbeat. Remove it once openai/codex#31383 ships.
 
 ### CASE-13: Plugin update overwrites patches
 - **Symptom**: A plugin update — notably a mid-session `/plugin` bump — reinstalls `hooks.json` un-patched, so the patch is lost and the hooks break again.

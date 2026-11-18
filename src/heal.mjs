@@ -15,6 +15,7 @@ import { newestMtime, readJson, writeJson, writeText } from './env.mjs';
 import { HOSTS } from './hosts.mjs';
 import { findIncompatible, patchAll } from './patch.mjs';
 import { fixSettings } from './settings.mjs';
+import { restoreStaleRoots } from './stale.mjs';
 import { verify } from './verify.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -83,12 +84,20 @@ const commit = (host, plugins) => {
 export function heal(hostId, { changedOnly = false } = {}) {
   const host = HOSTS[hostId];
   const started = Date.now();
-  if (changedOnly && unchanged(host)) return null;
+  // Before the guard: an upgrade run by another process moves nothing the
+  // guard watches, and the sessions it broke are waiting on this prompt.
+  const restored = host.cacheDir ? restoreStaleRoots(host.cacheDir) : [];
+  if (changedOnly && unchanged(host)) {
+    if (!restored.length) return null;
+    record(host, { dur: (Date.now() - started) + 'ms', restored: restored.length });
+    return { host, scanned: 0, patched: [], failed: [], settings: [], issues: [], fixes: restored };
+  }
 
   const plugins = host.listPlugins();
   const { patched, failed } = patchAll(host, TEMPLATE_CMD, plugins);
   const settings = fixSettings(host.settingsFile, { fix: true });
   const { issues, fixes } = verify(host, { fix: true, templateCmd: TEMPLATE_CMD, plugins });
+  fixes.push(...restored);
 
   commit(host, plugins);
   record(host, {
@@ -98,6 +107,7 @@ export function heal(hostId, { changedOnly = false } = {}) {
     settings: settings.length,
     fixed: fixes.length,
     issues: issues.length,
+    restored: restored.length,
   });
 
   return { host, scanned: plugins.length, patched, failed, settings, issues, fixes };
