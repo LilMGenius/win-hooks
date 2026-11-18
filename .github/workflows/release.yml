@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest    # provenance requires a GitHub-hosted runner
     permissions:
       contents: read
-      id-token: write         # mints the OIDC token npm signs the provenance with
+      id-token: write         # npm trusted publishing and provenance via OIDC
     steps:
       - uses: actions/checkout@v5
 
@@ -48,9 +48,18 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted publishing: npm trades this job's OIDC token for a one-time publish
+      # credential, so the repository holds no npm token. Provenance is attached
+      # automatically. The trust is set on npmjs.com for release.yml in this repository.
+      - name: Publish to npm (trusted publishing)
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} is already published; skipping"
+          else
+            npm publish --access public
+          fi
 
   github-release:
     needs: publish
